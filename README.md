@@ -1,6 +1,6 @@
 # VALORANT Champions Tour (VCT) Match Predictor
 
-Predict the outcome of official VCT matches using ML.
+Predict the outcome of official VCT matches using Random Forest.
 
 ## Tech Stack
 
