@@ -1,0 +1,7 @@
+{
+  "random_split_accuracy": 73.4,
+  "time_ordered_split_accuracy": 69.7,
+  "deployed_model_holdout_accuracy": 76.9,
+  "feature_count": 21,
+  "note": "Time-ordered split is a better proxy for real forecasting than random split."
+}

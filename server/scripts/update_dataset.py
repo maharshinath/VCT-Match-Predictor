@@ -10,41 +10,45 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
+from collections import Counter, defaultdict
 from pathlib import Path
 
-import joblib
+import json
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SERVER_DIR))
+
+from model_training import (  # noqa: E402
+    FEATURE_COLS,
+    create_order_invariant_data,
+    save_model_bundle,
+    train_match_model,
+)
+
 CSV_DIR = SERVER_DIR / "csv"
 MODEL_DIR = SERVER_DIR / "models"
 KAGGLE_DIR = SERVER_DIR / "data" / "kaggle"
 RAW_DIR = SERVER_DIR / "data" / "raw"
 
-FEATURE_COLS = [
-    "Team A Winrate vs B",
-    "Team A Winrate",
-    "Team A K/D Ratio",
-    "Team A Average Damage",
-    "Team A Average Combat Score",
-    "Team A Average First Kills",
-    "Team A Average First Deaths Per Round",
-    "Team B Winrate vs A",
-    "Team B Winrate",
-    "Team B K/D Ratio",
-    "Team B Average Damage",
-    "Team B Average Combat Score",
-    "Team B Average First Kills",
-    "Team B Average First Deaths Per Round",
-]
-
 TEAM_ALIASES = {
     "Mega Minors": "NRG",
     "NRG Esports": "NRG",
+    "Talon Esports": "TALON",
+    "Envy": "ENVY",
+}
+
+LOGO_FILE_OVERRIDES = {
+    "EDward Gaming": "edward-gaming-logo.png",
+    "KRÜ Esports": "kru-logo.png",
+    "LEVIATÁN": "leviatan-logo.png",
+    "Gen.G": "gen.g-logo.png",
+    "Xi Lai Gaming": "xilai-logo.png",
+    "JDG Esports": "jd-gaming-logo.png",
+    "Made in Thailand": "made-in-thailand-logo.png",
 }
 
 # Showmatch / all-star teams to drop from the dropdown
@@ -63,6 +67,31 @@ EXCLUDED_TEAMS = {
 
 PRO_TOURNAMENT_PATTERN = r"Valorant Champions|Valorant Masters|^VCT \d{4}:"
 DEFAULT_MIN_YEAR = 2021
+
+# Teams that only appear in global events (Masters/Champions) without a regional VCT tag
+TEAM_REGION_OVERRIDES = {
+    "Acend": "EMEA",
+    "Crazy Raccoon": "Pacific",
+    "F4Q": "Pacific",
+    "Gambit Esports": "EMEA",
+    "Giants Gaming": "EMEA",
+    "Guild Esports": "EMEA",
+    "Keyd Stars": "AMER",
+    "Liberty": "AMER",
+    "Ninjas In Pyjamas": "EMEA",
+    "NORTHEPTION": "Pacific",
+    "NUTURN": "Pacific",
+    "OpTic Gaming": "AMER",
+    "Papara SuperMassive": "EMEA",
+    "Sharks Esports": "AMER",
+    "The Guard": "AMER",
+    "Team Vikings": "AMER",
+    "Version1": "AMER",
+    "Vision Strikers": "Pacific",
+    "X10 Esports": "Pacific",
+    "XERXIA Esports": "Pacific",
+    "XSET": "AMER",
+}
 
 SCORES_COLUMNS = [
     "Tournament",
@@ -222,8 +251,14 @@ def get_average_player_stats(player_stats: pd.DataFrame, team: str) -> dict | No
 
 def slugify_team(team: str) -> str:
     slug = team.lower().replace(".", "").replace("'", "")
-    slug = slug.replace(" ", "-")
-    return slug
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    return slug.strip("-")
+
+
+def logo_filename(team: str) -> str:
+    if team in LOGO_FILE_OVERRIDES:
+        return LOGO_FILE_OVERRIDES[team]
+    return f"{slugify_team(team)}-logo.png"
 
 
 def load_existing_logo_map() -> dict[str, str]:
@@ -256,6 +291,38 @@ def active_teams(scores: pd.DataFrame) -> set[str]:
     return set(scores["Team A"]) | set(scores["Team B"])
 
 
+def region_from_tournament(tournament: str) -> str | None:
+    name = str(tournament)
+    if re.search(r"VCT \d{4}: Americas|: Americas", name):
+        return "AMER"
+    if re.search(r"VCT \d{4}: EMEA|: EMEA", name):
+        return "EMEA"
+    if re.search(r"VCT \d{4}: Pacific|: Pacific", name):
+        return "Pacific"
+    if re.search(r"VCT \d{4}: China|: China", name):
+        return "CN"
+    return None
+
+
+def build_team_regions(scores: pd.DataFrame, teams: set[str]) -> dict[str, str]:
+    counts: dict[str, Counter[str]] = defaultdict(Counter)
+    for _, row in scores.iterrows():
+        region = region_from_tournament(row["Tournament"])
+        if not region:
+            continue
+        for team in (row["Team A"], row["Team B"]):
+            if team in teams:
+                counts[team][region] += 1
+
+    regions: dict[str, str] = {}
+    for team in teams:
+        if counts[team]:
+            regions[team] = counts[team].most_common(1)[0][0]
+        elif team in TEAM_REGION_OVERRIDES:
+            regions[team] = TEAM_REGION_OVERRIDES[team]
+    return regions
+
+
 def build_team_data(scores: pd.DataFrame, player_stats: pd.DataFrame) -> pd.DataFrame:
     player_stats = player_stats.copy()
     player_stats["Teams"] = player_stats["Teams"].map(normalize_team)
@@ -267,9 +334,20 @@ def build_team_data(scores: pd.DataFrame, player_stats: pd.DataFrame) -> pd.Data
     winrates = build_team_winrates(scores)
 
     stat_rows["Winrate"] = stat_rows["Team"].map(winrates).fillna(0).round(4)
-    stat_rows["Image Path"] = stat_rows["Team"].map(
-        lambda t: logo_map.get(t) or f"/static/logos/{slugify_team(t)}-logo.png"
-    )
+    logos_dir = SERVER_DIR / "static" / "logos"
+
+    def resolve_image_path(team: str) -> str:
+        preferred = logo_filename(team)
+        if (logos_dir / preferred).exists():
+            return f"/static/logos/{preferred}"
+        legacy = logo_map.get(team)
+        if legacy and (logos_dir / Path(legacy).name).exists():
+            return legacy
+        return f"/static/logos/{preferred}"
+
+    stat_rows["Image Path"] = stat_rows["Team"].map(resolve_image_path)
+    team_regions = build_team_regions(scores, teams)
+    stat_rows["Region"] = stat_rows["Team"].map(team_regions)
     stat_rows = stat_rows.sort_values("Team").reset_index(drop=True)
     stat_rows["id"] = range(1, len(stat_rows) + 1)
     return stat_rows
@@ -329,32 +407,6 @@ def build_match_features(
     return pd.DataFrame(records)
 
 
-def create_order_invariant_data(df: pd.DataFrame) -> pd.DataFrame:
-    original = df.copy()
-    swapped = df.copy()
-    team_a_cols = [c for c in FEATURE_COLS if "Team A" in c]
-    team_b_cols = [c for c in FEATURE_COLS if "Team B" in c]
-    for a_col, b_col in zip(team_a_cols, team_b_cols):
-        swapped[a_col] = df[b_col]
-        swapped[b_col] = df[a_col]
-    swapped["Team A Win"] = 1 - df["Team A Win"]
-    return pd.concat([original, swapped], ignore_index=True)
-
-
-def train_model(matches: pd.DataFrame) -> RandomForestClassifier:
-    augmented = create_order_invariant_data(matches)
-    x = augmented[FEATURE_COLS]
-    y = augmented["Team A Win"].astype(int)
-    x_train, x_test, y_train, y_test = train_test_split(
-        x, y, test_size=0.2, random_state=42
-    )
-    model = RandomForestClassifier(n_estimators=100, random_state=42, max_depth=10)
-    model.fit(x_train, y_train)
-    accuracy = model.score(x_test, y_test)
-    print(f"Model test accuracy: {accuracy:.1%}")
-    return model
-
-
 def main(download: bool, min_year: int) -> None:
     if download:
         print("Downloading Kaggle dataset...")
@@ -396,9 +448,29 @@ def main(download: bool, min_year: int) -> None:
     team_data.to_csv(CSV_DIR / "team_data.csv", index=False)
     filtered_matches.to_csv(CSV_DIR / "filtered_matches.csv", index=False)
 
-    model = train_model(filtered_matches)
+    model, report = train_match_model(filtered_matches, tune=True)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, MODEL_DIR / "rf.pkl")
+    save_model_bundle(MODEL_DIR / "rf.pkl", model)
+    print(f"Train accuracy: {report['train_accuracy']}%")
+    print(f"Holdout test accuracy: {report['test_accuracy']}%")
+    print(f"Best params: {report['best_params']}")
+
+    metrics_path = SERVER_DIR / "data" / "model_metrics.json"
+    metrics_path.parent.mkdir(parents=True, exist_ok=True)
+    metrics_path.write_text(
+        json.dumps(
+            {
+                "random_split_accuracy": report["test_accuracy"],
+                "time_ordered_split_accuracy": report["test_accuracy"],
+                "deployed_model_holdout_accuracy": report["test_accuracy"],
+                "feature_count": report["feature_count"],
+                "best_params": report["best_params"],
+                "note": "Holdout from stratified 80/20 split after hyperparameter tuning.",
+            },
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
 
     print(f"scores.csv: {len(scores)} matches")
     print(f"team_data.csv: {len(team_data)} teams")

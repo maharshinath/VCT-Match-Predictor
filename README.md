@@ -1,42 +1,151 @@
 # VCT Match Predictor
 
-Full-stack web app that predicts winners of **Valorant Champions Tour (VCT)** matches using a **Random Forest** classifier trained on official pro match and player statistics.
+**Data-driven Valorant Champions Tour match forecasting** — pick any two pro teams, get a Random Forest winner prediction, per-map breakdowns, stat comparisons, and roster intel in a polished dark UI.
 
-**Live stack:** React (Vite) frontend · Flask REST API · scikit-learn model
+[![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
+[![Flask](https://img.shields.io/badge/Flask-3-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-Random%20Forest-F7931E?logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
 
-Forked from [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor), extended with an automated Kaggle data pipeline, expanded dataset (2021–2026), UI/API fixes, and a retrained model.
-
----
-
-## Features
-
-- **Match predictions** — pick two teams and get a predicted winner with team logos
-- **76 VCT teams** in the dropdown (Champions, Masters, Kickoff, Stage events)
-- **14 input features** per matchup: head-to-head winrate, overall winrate, K/D, damage, combat score, first kills, first deaths
-- **Dataset rebuild script** — download from Kaggle, process CSVs, and retrain `rf.pkl` in one command
-- **Team logos** served from Flask static assets
-- **CORS-enabled API** for local development
+Forked from [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor) and extended with a Kaggle data pipeline, 2021–2026 seasons, tuned feature engineering, map-level models, and a full UI redesign.
 
 ---
 
-## Model & data
+## What it does
 
-| Item | Details |
-|------|---------|
-| **Algorithm** | `RandomForestClassifier` (100 trees, `max_depth=10`) |
-| **Training** | Order-invariant augmentation (swap Team A/B + flip label) |
-| **Split** | 80% train / 20% test, `random_state=42` |
-| **Training accuracy** | ~85.5% |
-| **Test accuracy** | ~72.8% |
-| **Matches in dataset** | 865 pro VCT matches |
-| **Oldest events** | 2021 (Champions 2021, Masters Reykjavík / Berlin, etc.) |
-| **Newest events** | 2026 (VCT Kickoffs, Masters Santiago 2026) |
+1. **Select two VCT teams** from 74 pro rosters with logos and region tags.
+2. **Get a match winner prediction** with confidence tier (Likely · Slight edge · Toss-up), animated reveal, and a highlighted predicted winner strip.
+3. **Drill into four detail tabs** — map-by-map odds, head-to-head stats, full breakdown with key factors, and live rosters.
 
-**Data source:** [Valorant Champion Tour 2021–2026 — Ryan Luong (Kaggle)](https://www.kaggle.com/datasets/ryanluong1/valorant-champion-tour-2021-2023-data)
+Shareable URLs: `/predict/Sentinels/Fnatic` (team names are URL-encoded automatically).
 
-Raw Kaggle files are **not** committed (~79 MB). They are downloaded into `server/data/kaggle/` via the update script.
+---
 
-**Note:** Head-to-head and winrates are computed from full match history (not point-in-time), so offline accuracy is optimistic vs true pre-match forecasting. See *Possible improvements* below.
+## Screens & features
+
+### Home
+- Dual team dropdowns with search-friendly labels
+- Matchup preview cards once both teams are selected
+- One-click navigation to the prediction view
+
+### Prediction page
+
+| Area | What you get |
+|------|----------------|
+| **Winner strip** | Side-by-side team cards, gold “Predicted” badge, shimmer border, and glow on the favored team |
+| **Confidence badge** | Likely / Slight edge / Toss-up based on model margin |
+| **Map Predictions** | All 12 standard maps (A–Z), Valorant splash art, per-map win %, favored team logo |
+| **Stats** | H2H win rates, Recharts comparison chart, metrics table with leader logos on each delta |
+| **Breakdown** | Full winner analysis, win probabilities, and “why this team is favored” key factors |
+| **Roaster** | Player rosters lazy-loaded from the VLR API when you open the tab |
+
+### About
+- Dataset attribution and live model accuracy from `model_metrics.json`
+- Sample past predictions with hit/miss markers
+
+---
+
+## Model accuracy
+
+Refresh metrics anytime:
+
+```bash
+cd server
+python scripts/evaluate_model.py
+```
+
+| Metric | Value | Meaning |
+|--------|------:|---------|
+| Random split | **73.4%** | Stratified 80/20 holdout with tuned Random Forest |
+| Time-ordered split | **69.7%** | Train on earlier matches, test on later ones |
+| Deployed holdout | **76.9%** | Saved `rf.pkl` evaluated on last 20% of augmented rows |
+
+> **Read this carefully:** Features use full historical win rates and head-to-head stats (not point-in-time). Offline accuracy is optimistic vs true pre-match forecasting. Treat **~70%** (time-ordered) as the realistic ballpark.
+
+| | |
+|---|---|
+| **Algorithm** | `RandomForestClassifier` via `RandomizedSearchCV` |
+| **Features** | 14 base stats + 7 delta features (Team A − Team B) → **21 total** |
+| **Training** | Order-invariant augmentation (swap teams + flip label) |
+| **Map model** | Separate map win % from `map_team_stats.csv` / `map_h2h_stats.csv` |
+| **Inputs** | H2H win rate, overall win rate, K/D, damage, ACS, first kills/deaths |
+
+**Dataset:** [Valorant Champion Tour 2021–2026 — Ryan Luong (Kaggle)](https://www.kaggle.com/datasets/ryanluong1/valorant-champion-tour-2021-2023-data)
+
+Raw Kaggle files (~79 MB) are not committed. Download into `server/data/kaggle/` with `update_dataset.py --download`.
+
+---
+
+## Quick start
+
+### Prerequisites
+
+- Python **3.10+**
+- Node.js **18+**
+- [Kaggle API credentials](https://www.kaggle.com/docs/api) (only for `--download`)
+
+### Install
+
+```bash
+git clone https://github.com/maharshinath/VCT-Match-Predictor.git
+cd VCT-Match-Predictor
+
+cd server && pip install -r requirements.txt
+cd ../client && npm install
+```
+
+### Build dataset & model (first run)
+
+```bash
+cd server
+python scripts/update_dataset.py --download
+```
+
+Generates `csv/*.csv`, map stats, and `models/rf.pkl`.
+
+### Run locally
+
+**API** (port **5001** — avoids Windows conflicts on 5000):
+
+```bash
+cd server
+python -c "from app import app; app.run(debug=True, port=5001, use_reloader=False)"
+```
+
+**Frontend:**
+
+```bash
+cd client
+npm run dev
+```
+
+| Service | URL |
+|---------|-----|
+| App | http://localhost:5173 |
+| API | http://127.0.0.1:5001/api |
+
+Restart Flask after retraining so it loads the new `rf.pkl`.
+
+### Tests
+
+```bash
+cd server
+python -m pytest tests/test_api.py -q
+```
+
+---
+
+## API
+
+Base URL: `http://127.0.0.1:5001/api`
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| `GET` | `/teams` | All teams (stats + logo paths) |
+| `GET` | `/info/<team>` | Single team row |
+| `GET` | `/predict/<team1>/<team2>` | Winner %, map predictions (×12), key factors, confidence |
+| `GET` | `/matchup_data/<team1>/<team2>` | Feature row for stat comparison |
+| `GET` | `/roster/<team>` | Players and coaches (VLR, cached) |
+| `GET` | `/meta` | Comp pool, `model_metrics` |
 
 ---
 
@@ -44,159 +153,74 @@ Raw Kaggle files are **not** committed (~79 MB). They are downloaded into `serve
 
 ```
 VCT-Match-Predictor/
-├── client/                 # React + Vite frontend
-│   └── src/
-│       ├── pages/          # MakePrediction, PredictionPage, About
-│       ├── components/     # Matchup, Prediction, TeamCard, …
-│       └── services/api.js   # API client (port 5001)
+├── client/
+│   ├── src/
+│   │   ├── pages/              # Home, Prediction, About
+│   │   ├── components/         # Prediction, MapPredictions, TeamDashboard, TeamRoster
+│   │   ├── data/mapImages.js   # Valorant map splash URLs (valorant-api.com)
+│   │   └── services/api.js
+│   └── package.json
 ├── server/
-│   ├── app.py              # Flask REST API
-│   ├── models/
-│   │   ├── RandomForestPredictor.py
-│   │   └── rf.pkl          # Trained model (generated)
-│   ├── csv/
-│   │   ├── scores.csv      # Match results (generated)
-│   │   ├── team_data.csv   # Team aggregates (generated)
-│   │   └── filtered_matches.csv
+│   ├── app.py                  # Flask REST API
+│   ├── model_training.py       # Feature engineering + hyperparameter tuning
+│   ├── map_predictions.py      # Per-map win probabilities
+│   ├── prediction_extras.py    # Confidence, key factors, map sort
+│   ├── roster.py               # VLR roster cache
+│   ├── models/rf.pkl           # Trained model (generated)
 │   ├── scripts/
-│   │   └── update_dataset.py
-│   ├── static/logos/       # Team logo images
-│   └── data/kaggle/        # Raw Kaggle data (gitignored)
-└── README.md
+│   │   ├── update_dataset.py   # Rebuild CSVs + retrain
+│   │   └── evaluate_model.py   # Refresh model_metrics.json
+│   ├── data/model_metrics.json
+│   └── tests/test_api.py
+└── .github/workflows/          # Optional weekly data refresh
 ```
 
 ---
 
-## API endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| `GET` | `/api/teams` | All teams with stats and logo paths |
-| `GET` | `/api/info/<team>` | Single team row |
-| `GET` | `/api/predict/<team1>/<team2>` | Predicted winner (`team1_win_prediction`) |
-| `GET` | `/api/matchup_data/<team1>/<team2>` | Feature row used for prediction |
-
-Default base URL: `http://127.0.0.1:5001/api`
-
----
-
-## Setup
-
-### Prerequisites
-
-- Python 3.10+
-- Node.js 18+
-- [Kaggle API credentials](https://www.kaggle.com/docs/api) (for `--download` only)
-
-### 1. Clone and install
-
-```bash
-git clone https://github.com/maharshinath/VCT-Match-Predictor.git
-cd VCT-Match-Predictor
-
-# Backend
-cd server
-pip install -r requirements.txt
-
-# Frontend (new terminal)
-cd client
-npm install
-```
-
-### 2. Build dataset & model (first time)
+## Updating data
 
 From `server/`:
 
 ```bash
-python scripts/update_dataset.py --download
+python scripts/update_dataset.py --download   # fetch latest Kaggle zip
+python scripts/update_dataset.py              # rebuild CSVs + retrain RF
+python scripts/evaluate_model.py              # refresh About-page metrics
 ```
-
-This downloads Kaggle data, builds `csv/*.csv`, and trains `models/rf.pkl`.
-
-### 3. Run the app
-
-**Backend** (from `server/`):
-
-```bash
-python -c "from app import app; app.run(debug=True, port=5001, use_reloader=False)"
-```
-
-**Frontend** (from `client/`):
-
-```bash
-npm run dev
-```
-
-Open **http://localhost:5173/** — API at **http://127.0.0.1:5001**
-
-> Port **5001** is used because port 5000 is often occupied locally. The frontend is configured for `5001` in `api.js` and logo URLs.
-
----
-
-## Updating the dataset
-
-From `server/`:
-
-```bash
-# Refresh from Kaggle (optional)
-python scripts/update_dataset.py --download
-
-# Rebuild CSVs + retrain model (default: 2021+ pro VCT events)
-python scripts/update_dataset.py
-```
-
-**Script options:**
 
 | Flag | Effect |
 |------|--------|
-| `--download` | Fetch latest zip from Kaggle before processing |
-| `--min-year 2024` | Only include seasons from 2024 onward |
-| `--all-years` | Include all seasons (includes Challengers; many extra teams) |
+| `--download` | Fetch Kaggle zip before processing |
+| `--min-year 2024` | Seasons from 2024 onward only |
+| `--all-years` | All seasons including Challengers |
 
 Default: **`--min-year 2021`** with pro-tournament filtering (Champions, Masters, `VCT YYYY:` events).
-
----
-
-## Recent changes
-
-- Added `server/scripts/update_dataset.py` — Kaggle → CSV → model pipeline
-- Expanded data to **2021–2026** (865 matches, 76 teams)
-- Retrained Random Forest with order-invariant augmentation
-- Fixed API JSON responses (`to_dict` instead of double-encoded strings)
-- Fixed empty team dropdowns (option styling + API error handling)
-- Pointed frontend/API to **port 5001**
-- Updated About page (Random Forest, accuracy, dataset link)
-- Added root `.gitignore` (excludes `node_modules`, `data/kaggle/`)
-- Restored team logos under `server/static/logos/`
-
----
-
-## Possible improvements
-
-- Time-based train/test split and point-in-time features (reduce leakage)
-- Order-invariant inference (score both team orderings at predict time)
-- Recent-form features (last N matches)
-- Gradient boosting (XGBoost / LightGBM) with hyperparameter tuning
-- Map/agent features from additional Kaggle CSVs
 
 ---
 
 ## Tech stack
 
 | Layer | Technologies |
-|-------|----------------|
-| Frontend | React 19, React Router 7, Vite 7 |
+|-------|--------------|
+| Frontend | React 19, React Router 7, Vite 7, Recharts |
 | Backend | Flask 3, Flask-RESTful, flask-cors |
-| ML | scikit-learn, pandas, joblib |
+| ML / data | scikit-learn, pandas, joblib |
+| Rosters | [VLR API](https://vlr.orlandomm.net/) |
+| Map art | [valorant-api.com](https://valorant-api.com) CDN |
 
 ---
 
-## License
+## Roadmap
 
-Dataset: MIT (Kaggle). Application code: see repository license.
+- Point-in-time features to reduce train/test leakage
+- Gradient boosting (XGBoost / LightGBM) with proper tuning
+- Recent form and roster strength as model inputs
+- Self-hosted map images
 
 ---
 
-## Author
+## License & credits
 
-[maharshinath](https://github.com/maharshinath) — fork of [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor)
+- **Dataset:** MIT (Kaggle)
+- **Application code:** see repository license
+- **Author:** [maharshinath](https://github.com/maharshinath)
+- **Original fork:** [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor)

@@ -1,19 +1,21 @@
-import {Link} from "react-router-dom"
+import { NavLink } from 'react-router-dom'
 import '../css/Navbar.css'
 
 function NavBar() {
+  const linkClass = ({ isActive }) =>
+    `navbar-link${isActive ? ' active' : ''}`
 
-    return (
-        <nav className="navbar glass">
-            <div className="app-name">
-                <Link to="/">VCT Match Predictor</Link>
-            </div>
-            <div className="right">
-                <Link to="/" className="navbar-link">Home</Link>
-                <Link to="/about" className="navbar-link">About</Link>
-            </div>
-        </nav>
-    )
+  return (
+    <nav className="navbar glass">
+      <div className="app-name">
+        <NavLink to="/" end>VCT Match Predictor</NavLink>
+      </div>
+      <div className="right">
+        <NavLink to="/" end className={linkClass}>Home</NavLink>
+        <NavLink to="/about" className={linkClass}>About</NavLink>
+      </div>
+    </nav>
+  )
 }
 
 export default NavBar

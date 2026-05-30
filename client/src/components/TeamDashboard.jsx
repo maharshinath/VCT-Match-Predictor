@@ -1,171 +1,175 @@
-import React from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from 'recharts'
+import '../css/TeamDashboard.css'
 
-const TeamStatsDashboard = ({team1, team2, matchupData}) => {
-  // Original data
+const API_ORIGIN = 'http://127.0.0.1:5001'
+const DEFAULT_LOGO = `${API_ORIGIN}/static/logos/default-logo.svg`
+
+function logoUrl(path) {
+  if (!path) return DEFAULT_LOGO
+  return path.startsWith('/') ? `${API_ORIGIN}${path}` : `${API_ORIGIN}/${path}`
+}
+
+function betterTeamForStat(a, b, team1, team2) {
+  if (a == null || b == null || Number.isNaN(Number(a)) || Number.isNaN(Number(b))) return null
+  if (a === b) return null
+  return b > a ? team2 : team1
+}
+
+const CHART_TOOLTIP_STYLE = {
+  backgroundColor: '#1a2332',
+  border: '1px solid rgba(255,255,255,0.12)',
+  borderRadius: '8px',
+  color: '#f4f7fb',
+  fontSize: '13px',
+}
+
+function fmt(value, digits = 1) {
+  if (value == null || Number.isNaN(Number(value))) return '—'
+  return Number(value).toFixed(digits)
+}
+
+function diffClass(a, b) {
+  const d = b - a
+  if (d > 0) return 'diff-positive'
+  if (d < 0) return 'diff-negative'
+  return ''
+}
+
+const TeamStatsDashboard = ({ team1, team2, matchupData, embedded = false }) => {
   const rawData = {
-    "Team A Winrate vs B": matchupData["Team A Winrate vs B"],
-    "Team A Winrate": team1["Winrate"],
-    "Team A K/D Ratio": team1["K/D Ratio"],
-    "Team A Average Damage": team1["Average Damage"],
-    "Team A Average Combat Score": team1["Average Combat Score"],
-    "Team A Average First Kills": team1["Average First Kills"],
-    "Team B Winrate vs A": matchupData["Team B Winrate vs A"],
-    "Team B Winrate": team2["Winrate"],
-    "Team B K/D Ratio": team2["K/D Ratio"],
-    "Team B Average Damage": team2["Average Damage"],
-    "Team B Average Combat Score": team2["Average Combat Score"],
-    "Team B Average First Kills": team2["Average First Kills"]
-  };
+    h2hA: matchupData['Team A Winrate vs B'],
+    h2hB: matchupData['Team B Winrate vs A'],
+    winA: team1.Winrate,
+    winB: team2.Winrate,
+    kdA: team1['K/D Ratio'],
+    kdB: team2['K/D Ratio'],
+    dmgA: team1['Average Damage'],
+    dmgB: team2['Average Damage'],
+    acsA: team1['Average Combat Score'],
+    acsB: team2['Average Combat Score'],
+    fkA: team1['Average First Kills'],
+    fkB: team2['Average First Kills'],
+  }
 
-  // Data for bar chart (excluding head-to-head stats)
+  const t1Name = team1.Team
+  const t2Name = team2.Team
+
   const barData = [
-    {
-      stat: 'Overall Winrate (%)',
-      'Team A': rawData["Team A Winrate"],
-      'Team B': rawData["Team B Winrate"]
-    },
-    {
-      stat: 'K/D Ratio',
-      'Team A': rawData["Team A K/D Ratio"],
-      'Team B': rawData["Team B K/D Ratio"]
-    },
-    {
-      stat: 'Average Damage',
-      'Team A': rawData["Team A Average Damage"],
-      'Team B': rawData["Team B Average Damage"]
-    },
-    {
-      stat: 'Average Combat Score',
-      'Team A': rawData["Team A Average Combat Score"],
-      'Team B': rawData["Team B Average Combat Score"]
-    },
-    {
-      stat: 'Average First Kills',
-      'Team A': rawData["Team A Average First Kills"],
-      'Team B': rawData["Team B Average First Kills"]
-    }
-  ];
+    { stat: 'Winrate %', [t1Name]: rawData.winA, [t2Name]: rawData.winB },
+    { stat: 'K/D', [t1Name]: rawData.kdA, [t2Name]: rawData.kdB },
+    { stat: 'Damage', [t1Name]: rawData.dmgA, [t2Name]: rawData.dmgB },
+    { stat: 'ACS', [t1Name]: rawData.acsA, [t2Name]: rawData.acsB },
+    { stat: 'First kills', [t1Name]: rawData.fkA, [t2Name]: rawData.fkB },
+  ]
 
+  const tableRows = [
+    { label: 'Overall winrate', a: rawData.winA, b: rawData.winB, suffix: '%', digits: 1 },
+    { label: 'K/D ratio', a: rawData.kdA, b: rawData.kdB, digits: 3 },
+    { label: 'Avg damage', a: rawData.dmgA, b: rawData.dmgB, digits: 1 },
+    { label: 'Avg combat score', a: rawData.acsA, b: rawData.acsB, digits: 1 },
+    { label: 'Avg first kills', a: rawData.fkA, b: rawData.fkB, digits: 2 },
+  ]
 
   return (
-    <div className="w-full max-w-7xl mx-auto p-6 bg-gradient-to-br from-gray-50 to-gray-100 min-h-screen">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-gray-800 mb-2">Team Performance Dashboard</h1>
-        <p className="text-gray-600">Comprehensive analysis of {team1["Team"]} vs {team2["Team"]} statistics</p>
+    <div className={`stats-dashboard${embedded ? ' stats-dashboard--embedded' : ''}`}>
+      {!embedded && (
+        <header className="stats-dashboard__header">
+          <h2 className="stats-dashboard__title">Team comparison</h2>
+          <p className="stats-dashboard__subtitle">
+            Historical VCT stats for {t1Name} vs {t2Name}
+          </p>
+        </header>
+      )}
+
+      <div className="stats-h2h">
+        <div className="stats-h2h-card team-a">
+          <span className="label">{t1Name} H2H winrate</span>
+          <span className="value">{fmt(rawData.h2hA, 0)}%</span>
+        </div>
+        <div className="stats-h2h-card team-b">
+          <span className="label">{t2Name} H2H winrate</span>
+          <span className="value">{fmt(rawData.h2hB, 0)}%</span>
+        </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-8">
-        {/* Bar Chart Section */}
-        <div className="xl:col-span-2">
-          <div className="bg-white rounded-xl shadow-lg p-6">
-            <h2 className="text-2xl font-semibold text-gray-800 mb-6">Overall Performance Comparison</h2>
-            <ResponsiveContainer width="100%" height={500}>
-              <BarChart
-                data={barData}
-                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-              >
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis 
-                  dataKey="stat" 
-                  tick={{ fontSize: 12 }}
-                  angle={-45}
-                  textAnchor="end"
-                  height={80}
-                />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip 
-                  contentStyle={{ 
-                    backgroundColor: '#f8f9fa', 
-                    border: '1px solid #dee2e6',
-                    borderRadius: '8px'
-                  }}
-                />
-                <Legend />
-                <Bar 
-                  dataKey="Team A" 
-                  fill="#3B82F6" 
-                  radius={[4, 4, 0, 0]}
-                  name={team1["Team"]}
-                />
-                <Bar 
-                  dataKey="Team B" 
-                  fill="#EF4444" 
-                  radius={[4, 4, 0, 0]}
-                  name={team2["Team"]}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
+      <div className="stats-chart-card">
+        <h3>Performance overview</h3>
+        <div className="stats-chart-wrap">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={barData} margin={{ top: 8, right: 12, left: 0, bottom: 48 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
+              <XAxis
+                dataKey="stat"
+                tick={{ fill: 'rgba(244,247,251,0.55)', fontSize: 11 }}
+                angle={-28}
+                textAnchor="end"
+                height={56}
+              />
+              <YAxis tick={{ fill: 'rgba(244,247,251,0.55)', fontSize: 11 }} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} />
+              <Legend wrapperStyle={{ fontSize: '12px', paddingTop: '8px' }} />
+              <Bar dataKey={t1Name} fill="var(--color-team-a)" radius={[4, 4, 0, 0]} />
+              <Bar dataKey={t2Name} fill="var(--color-team-b)" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
+      </div>
 
-        
-        
-      
-
-      {/* Stats Summary Table */}
-      <div className="mt-8 bg-white rounded-xl shadow-lg p-6">
-        <h2 className="text-2xl font-semibold text-gray-800 mb-6">Detailed Statistics</h2>
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+      <div className="stats-table-card">
+        <h3>Detailed metrics</h3>
+        <div className="stats-table-scroll">
+          <table className="stats-table">
             <thead>
-              <tr className="bg-gray-50">
-                <th className="text-left p-3 border-b-2 border-gray-200 font-semibold text-gray-700">Metric</th>
-                <th className="text-center p-3 border-b-2 border-gray-200 font-semibold text-blue-600">{team1["Team"]}
-                </th>
-                <th className="text-center p-3 border-b-2 border-gray-200 font-semibold text-red-600">{team2["Team"]}</th>
-                <th className="text-center p-3 border-b-2 border-gray-200 font-semibold text-gray-700">Difference</th>
+              <tr>
+                <th>Metric</th>
+                <th className="col-team-a">{t1Name}</th>
+                <th className="col-team-b">{t2Name}</th>
+                <th>Δ</th>
               </tr>
             </thead>
             <tbody>
-              <tr className="hover:bg-gray-50">
-                <td className="p-3 border-b border-gray-200">Overall Winrate (%)</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team A Winrate"].toFixed(1)}%</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team B Winrate"].toFixed(1)}%</td>
-                <td className="p-3 border-b border-gray-200 text-center">
-                  {(rawData["Team B Winrate"] - rawData["Team A Winrate"]).toFixed(1)}%
-                </td>
-              </tr>
-              <tr className="hover:bg-gray-50">
-                <td className="p-3 border-b border-gray-200">K/D Ratio</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team A K/D Ratio"].toFixed(3)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team B K/D Ratio"].toFixed(3)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">
-                  {(rawData["Team B K/D Ratio"] - rawData["Team A K/D Ratio"]).toFixed(3)}
-                </td>
-              </tr>
-              <tr className="hover:bg-gray-50">
-                <td className="p-3 border-b border-gray-200">Average Damage</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team A Average Damage"].toFixed(1)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team B Average Damage"].toFixed(1)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">
-                  {(rawData["Team B Average Damage"] - rawData["Team A Average Damage"]).toFixed(1)}
-                </td>
-              </tr>
-              <tr className="hover:bg-gray-50">
-                <td className="p-3 border-b border-gray-200">Average Combat Score</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team A Average Combat Score"].toFixed(1)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team B Average Combat Score"].toFixed(1)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">
-                  {(rawData["Team B Average Combat Score"] - rawData["Team A Average Combat Score"]).toFixed(1)}
-                </td>
-              </tr>
-              <tr className="hover:bg-gray-50">
-                <td className="p-3 border-b border-gray-200">Average First Kills</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team A Average First Kills"].toFixed(2)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">{rawData["Team B Average First Kills"].toFixed(2)}</td>
-                <td className="p-3 border-b border-gray-200 text-center">
-                  {(rawData["Team B Average First Kills"] - rawData["Team A Average First Kills"]).toFixed(2)}
-                </td>
-              </tr>
+              {tableRows.map((row) => {
+                const leader = betterTeamForStat(row.a, row.b, team1, team2)
+                return (
+                <tr key={row.label}>
+                  <td>{row.label}</td>
+                  <td className="col-team-a">
+                    {fmt(row.a, row.digits)}{row.suffix || ''}
+                  </td>
+                  <td className="col-team-b">
+                    {fmt(row.b, row.digits)}{row.suffix || ''}
+                  </td>
+                  <td className={`stats-diff-cell ${diffClass(row.a, row.b)}`}>
+                    <span className="stats-diff-value">
+                      {fmt(row.b - row.a, row.digits)}{row.suffix || ''}
+                    </span>
+                    {leader && (
+                      <img
+                        className="stats-diff-logo"
+                        src={logoUrl(leader['Image Path'])}
+                        alt=""
+                        title={leader.Team}
+                        onError={(e) => { e.currentTarget.src = DEFAULT_LOGO }}
+                      />
+                    )}
+                  </td>
+                </tr>
+              )})}
             </tbody>
           </table>
         </div>
       </div>
     </div>
-    </div>
-    
-  );
-};
+  )
+}
 
-export default TeamStatsDashboard;
+export default TeamStatsDashboard

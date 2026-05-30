@@ -1,5 +1,5 @@
 import '../css/Home.css'
-import { useState, useEffect} from "react"
+import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTeams } from '../services/api'
 import Matchup from '../components/Matchup'
@@ -9,10 +9,8 @@ function MakePrediction() {
     const [teams, setTeams] = useState([])
     const [loading, setLoading] = useState(true)
     const [error, setError] = useState(null)
-
-    // Use empty string instead of null so <select> resets correctly
-    const [team1, setTeam1] = useState("")
-    const [team2, setTeam2] = useState("")
+    const [team1, setTeam1] = useState('')
+    const [team2, setTeam2] = useState('')
     const navigate = useNavigate()
 
     useEffect(() => {
@@ -35,100 +33,94 @@ function MakePrediction() {
     }, [])
 
     const clearMatch = () => {
-        setTeam1("")
-        setTeam2("")
+        setTeam1('')
+        setTeam2('')
     }
 
     const handlePredict = () => {
-        // Navigate to prediction page
-        navigate('/predict/' + teams[team1].Team + '/' + teams[team2].Team)
+        const t1 = teams[team1]?.Team
+        const t2 = teams[team2]?.Team
+        if (!t1 || !t2) return
+        navigate(`/predict/${encodeURIComponent(t1)}/${encodeURIComponent(t2)}`)
     }
 
     const handleTeam1Change = (e) => {
         const selectedIndex = e.target.value
-        // If the selected team is the same as team2, clear team2
-        if (selectedIndex === team2) {
-            setTeam2("")
-        }
+        if (selectedIndex === team2) setTeam2('')
         setTeam1(selectedIndex)
     }
 
     const handleTeam2Change = (e) => {
         const selectedIndex = e.target.value
-        // If the selected team is the same as team1, clear team1
-        if (selectedIndex === team1) {
-            setTeam1("")
-        }
+        if (selectedIndex === team1) setTeam1('')
         setTeam2(selectedIndex)
     }
 
     return (
         <div className="home make-prediction">
-            <div className="text-content">
+            <header className="text-content">
+                <p className="section-eyebrow">Valorant Champions Tour</p>
                 <h1>VCT Match Predictor</h1>
-                <p>Predict the outcome of VCT matches using machine learning</p>
-            </div>
+                <p className="hero-tagline">Select two teams to generate a match winner and map breakdown.</p>
+            </header>
 
-            {/* Send actual team objects to Matchup */}
-            <Matchup 
-                team1={team1 !== "" ? teams[team1] : null} 
-                team2={team2 !== "" ? teams[team2] : null} 
-            />
-
-            {error && <p className="error-message">{error}</p>}
-
-            {loading ? (
-                <p>Loading teams...</p>
-            ) : (
-                <div className="dropdowns">
-                    {/* TEAM 1 */}
-                    <select 
-                        id="team1" 
-                        value={team1} 
-                        onChange={handleTeam1Change}
-                    >
-                        <option value="">Select Team 1</option>
-                        {teams.map((team, index) => {
-                            // Exclude team2 from team1 dropdown
-                            if (index.toString() === team2) return null
-                            return (
-                                <option key={team.id} value={index}>
-                                    {team.Team}
-                                </option>
-                            )
-                        })}
-                    </select>
-
-                    {/* TEAM 2 */}
-                    <select 
-                        id="team2" 
-                        value={team2} 
-                        onChange={handleTeam2Change}
-                    >
-                        <option value="">Select Team 2</option>
-                        {teams.map((team, index) => {
-                            // Exclude team1 from team2 dropdown
-                            if (index.toString() === team1) return null
-                            return (
-                                <option key={team.id} value={index}>
-                                    {team.Team}
-                                </option>
-                            )
-                        })}
-                    </select>
-                </div>
+            {team1 !== '' && team2 !== '' && (
+                <Matchup team1={teams[team1]} team2={teams[team2]} />
             )}
 
-            {/* BUTTONS */}
-            <div className="buttons">
-                <button onClick={clearMatch}>Clear Match</button>
+            {error && <p className="error-message" role="alert">{error}</p>}
 
-                <button 
-                    disabled={team1 === "" || team2 === ""}
-                    onClick={handlePredict}
-                >
-                    Predict
-                </button>
+            <div className="selection-panel">
+                <span className="selection-panel__label">Match setup</span>
+
+                {loading ? (
+                    <p className="loading-teams">Loading teams…</p>
+                ) : (
+                    <div className="dropdowns">
+                        <div className="dropdown-field">
+                            <label htmlFor="team1">Team 1</label>
+                            <select id="team1" value={team1} onChange={handleTeam1Change}>
+                                <option value="">Choose team</option>
+                                {teams.map((team, index) => {
+                                    if (index.toString() === team2) return null
+                                    return (
+                                        <option key={team.id} value={index}>
+                                            {team.Team}
+                                        </option>
+                                    )
+                                })}
+                            </select>
+                        </div>
+                        <div className="dropdown-field">
+                            <label htmlFor="team2">Team 2</label>
+                            <select id="team2" value={team2} onChange={handleTeam2Change}>
+                                <option value="">Choose team</option>
+                                {teams.map((team, index) => {
+                                    if (index.toString() === team1) return null
+                                    return (
+                                        <option key={team.id} value={index}>
+                                            {team.Team}
+                                        </option>
+                                    )
+                                })}
+                            </select>
+                        </div>
+                    </div>
+                )}
+
+                <div className="buttons">
+                    <button type="button" className="btn-ghost" onClick={clearMatch}>
+                        Clear
+                    </button>
+                    <button
+                        type="button"
+                        className="btn-primary predict-btn"
+                        disabled={team1 === '' || team2 === '' || loading}
+                        onClick={handlePredict}
+                    >
+                        Predict match
+                    </button>
+                </div>
             </div>
         </div>
     )

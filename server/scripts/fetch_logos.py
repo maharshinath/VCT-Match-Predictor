@@ -1,0 +1,161 @@
+"""
+Download missing team logos from VLR (via vlr.orlandomm.net API) and refresh team_data paths.
+
+Usage (from server/):
+  python scripts/fetch_logos.py
+  python scripts/fetch_logos.py --dry-run
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import time
+from pathlib import Path
+
+import pandas as pd
+import requests
+
+SERVER_DIR = Path(__file__).resolve().parents[1]
+LOGO_DIR = SERVER_DIR / "static" / "logos"
+TEAM_DATA_PATH = SERVER_DIR / "csv" / "team_data.csv"
+KAGGLE_DIR = SERVER_DIR / "data" / "kaggle"
+VLR_API = "https://vlr.orlandomm.net/api/v1/teams/{team_id}"
+
+# Canonical team name merges (same as update_dataset.py)
+TEAM_ALIASES = {
+    "Mega Minors": "NRG",
+    "NRG Esports": "NRG",
+    "Talon Esports": "TALON",
+    "Envy": "ENVY",
+}
+
+# Prefer existing filenames when slug does not match
+LOGO_FILE_OVERRIDES = {
+    "EDward Gaming": "edward-gaming-logo.png",
+    "KRÜ Esports": "kru-logo.png",
+    "LEVIATÁN": "leviatan-logo.png",
+    "Gen.G": "gen.g-logo.png",
+    "Xi Lai Gaming": "xilai-logo.png",
+    "JDG Esports": "jd-gaming-logo.png",
+    "Made in Thailand": "made-in-thailand-logo.png",
+}
+
+
+def normalize_name(name: str) -> str:
+    return TEAM_ALIASES.get(name.strip(), name.strip())
+
+
+def slugify_team(team: str) -> str:
+    slug = team.lower().replace(".", "").replace("'", "")
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    return slug.strip("-")
+
+
+def logo_filename(team: str) -> str:
+    if team in LOGO_FILE_OVERRIDES:
+        return LOGO_FILE_OVERRIDES[team]
+    return f"{slugify_team(team)}-logo.png"
+
+
+def build_vlr_id_lookup() -> dict[str, int]:
+    lookup: dict[str, int] = {}
+    for path in sorted(KAGGLE_DIR.glob("vct_*/ids/teams_ids.csv")):
+        df = pd.read_csv(path)
+        df = df.dropna(subset=["Team ID"])
+        for team, team_id in zip(df["Team"], df["Team ID"]):
+            name = str(team).strip()
+            lookup[name] = int(team_id)
+            canonical = normalize_name(name)
+            lookup.setdefault(canonical, int(team_id))
+    return lookup
+
+
+def fetch_logo_url(team_id: int) -> str | None:
+    try:
+        resp = requests.get(VLR_API.format(team_id=team_id), timeout=20)
+        resp.raise_for_status()
+        logo = resp.json().get("data", {}).get("info", {}).get("logo")
+        if logo and logo.startswith("//"):
+            return "https:" + logo
+        return logo
+    except requests.RequestException:
+        return None
+
+
+def download_logo(url: str, dest: Path) -> bool:
+    try:
+        resp = requests.get(url, timeout=30)
+        resp.raise_for_status()
+        if "image" not in resp.headers.get("Content-Type", "") and not url.endswith(".png"):
+            return False
+        dest.write_bytes(resp.content)
+        return True
+    except requests.RequestException:
+        return False
+
+
+def main(dry_run: bool) -> None:
+    LOGO_DIR.mkdir(parents=True, exist_ok=True)
+    team_data = pd.read_csv(TEAM_DATA_PATH)
+    vlr_lookup = build_vlr_id_lookup()
+
+    downloaded = 0
+    skipped = 0
+    failed = []
+
+    for _, row in team_data.iterrows():
+        team = normalize_name(str(row["Team"]))
+        filename = logo_filename(team)
+        dest = LOGO_DIR / filename
+        image_path = f"/static/logos/{filename}"
+
+        if dest.exists() and dest.stat().st_size > 500:
+            skipped += 1
+            team_data.loc[team_data["Team"] == row["Team"], "Image Path"] = image_path
+            continue
+
+        team_id = vlr_lookup.get(team) or vlr_lookup.get(str(row["Team"]).strip())
+        if not team_id:
+            failed.append((team, "no VLR id"))
+            continue
+
+        if dry_run:
+            print(f"[dry-run] would fetch {team} (id={team_id}) -> {filename}")
+            continue
+
+        url = fetch_logo_url(team_id)
+        if not url:
+            failed.append((team, "no logo url"))
+            continue
+
+        if download_logo(url, dest):
+            downloaded += 1
+            team_data.loc[team_data["Team"] == row["Team"], "Image Path"] = image_path
+            print(f"OK  {team} -> {filename}")
+        else:
+            failed.append((team, "download failed"))
+
+        time.sleep(0.3)
+
+    if not dry_run:
+        # Merge alias rows: drop Talon Esports if TALON exists
+        team_data["Team"] = team_data["Team"].map(
+            lambda t: TEAM_ALIASES.get(str(t).strip(), str(t).strip())
+        )
+        team_data = team_data.drop_duplicates(subset=["Team"], keep="first")
+        team_data["Image Path"] = team_data["Team"].map(
+            lambda t: f"/static/logos/{logo_filename(t)}"
+        )
+        team_data.to_csv(TEAM_DATA_PATH, index=False)
+
+    print(f"\nDownloaded: {downloaded}, already had: {skipped}, failed: {len(failed)}")
+    for team, reason in failed:
+        print(f"  FAIL {team}: {reason}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Fetch team logos from VLR")
+    parser.add_argument("--dry-run", action="store_true")
+    args = parser.parse_args()
+    main(dry_run=args.dry_run)

@@ -2,22 +2,70 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: var(--spacing-2xl);
-  padding: var(--spacing-xl) var(--spacing-lg);
-  max-width: var(--max-width-content);
-  margin: 0 auto;
+  gap: var(--spacing-3xl);
   width: 100%;
-  animation: fadeIn 0.5s ease-in;
+  max-width: var(--max-width-content);
 }
 
-@keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+.prediction-page.predicting,
+.prediction-page.prediction-error {
+  min-height: 50vh;
+  justify-content: center;
+}
 
-.prediction-page p { font-size: var(--font-size-lg); color: var(--color-text-secondary); text-align: center; padding: var(--spacing-2xl); }
+.predicting-loader {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--spacing-lg);
+  padding: var(--spacing-2xl) var(--spacing-3xl);
+  text-align: center;
+}
+
+.predicting-spinner {
+  width: 48px;
+  height: 48px;
+  border: 3px solid var(--color-border-primary);
+  border-top-color: var(--color-accent-primary);
+  border-radius: 50%;
+  animation: spin 0.85s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+.predicting-title {
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  margin: 0;
+}
+
+.predicting-matchup {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-tertiary);
+  margin: 0;
+  letter-spacing: 0.04em;
+}
+
+.prediction-error-card {
+  padding: var(--spacing-2xl);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-lg);
+  max-width: 420px;
+}
+
+.prediction-actions {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  padding-top: var(--spacing-md);
+  border-top: 1px solid var(--color-border-primary);
+}
 
 @media (max-width: 768px) {
-  .prediction-page { gap: var(--spacing-xl); padding: var(--spacing-lg) var(--spacing-md); }
-}
-
-@media (max-width: 480px) {
-  .prediction-page { gap: var(--spacing-lg); padding: var(--spacing-md) var(--spacing-sm); }
+  .prediction-page { gap: var(--spacing-2xl); }
 }

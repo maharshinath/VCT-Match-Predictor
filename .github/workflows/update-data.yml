@@ -1,0 +1,32 @@
+name: Update VCT dataset
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install -r server/requirements.txt kaggle
+
+      - name: Download and rebuild dataset
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          cd server
+          python scripts/update_dataset.py --download
+          python map_predictions.py
+          python scripts/evaluate_model.py
+
+      - name: Run API tests
+        run: cd server && python -m pytest tests/ -q

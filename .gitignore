@@ -11,6 +11,7 @@ venv/
 # Large / generated data (download via scripts/update_dataset.py)
 server/data/kaggle/
 server/data/raw/
+server/data/team_rosters.json
 
 # Environment & secrets
 .env
