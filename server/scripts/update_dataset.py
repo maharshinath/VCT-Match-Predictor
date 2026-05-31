@@ -407,28 +407,14 @@ def build_match_features(
     return pd.DataFrame(records)
 
 
-def main(download: bool, min_year: int) -> None:
-    if download:
-        print("Downloading Kaggle dataset...")
-        download_kaggle_dataset()
-
-    year_dirs = find_year_dirs(KAGGLE_DIR, min_year=min_year)
-    if not year_dirs:
-        year_dirs = find_year_dirs(RAW_DIR, min_year=min_year)
-    if not year_dirs:
-        raise SystemExit(
-            "No vct_* data folders found. Run with --download or place raw data under server/data/kaggle/"
-        )
-
-    print(f"Using {len(year_dirs)} season folders: {[p.name for p in year_dirs]}", flush=True)
-
-    print("Loading match results...", flush=True)
-    scores = normalize_scores(
-        load_concat_csv(year_dirs, "matches", "scores.csv")
-    )
-    print("Loading player stats...", flush=True)
-    player_stats = load_concat_csv(year_dirs, "players_stats", "players_stats.csv")
-
+def rebuild_pipeline(
+    scores: pd.DataFrame,
+    player_stats: pd.DataFrame,
+    *,
+    tune: bool = True,
+) -> dict:
+    """Rebuild team CSVs, filtered matches, and retrain the Random Forest."""
+    player_stats = player_stats.copy()
     player_stats["Teams"] = player_stats["Teams"].map(normalize_team)
     teams = active_teams(scores)
 
@@ -448,7 +434,7 @@ def main(download: bool, min_year: int) -> None:
     team_data.to_csv(CSV_DIR / "team_data.csv", index=False)
     filtered_matches.to_csv(CSV_DIR / "filtered_matches.csv", index=False)
 
-    model, report = train_match_model(filtered_matches, tune=True)
+    model, report = train_match_model(filtered_matches, tune=tune)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     save_model_bundle(MODEL_DIR / "rf.pkl", model)
     print(f"Train accuracy: {report['train_accuracy']}%")
@@ -476,6 +462,32 @@ def main(download: bool, min_year: int) -> None:
     print(f"team_data.csv: {len(team_data)} teams")
     print(f"filtered_matches.csv: {len(filtered_matches)} training rows")
     print(f"Saved model to {MODEL_DIR / 'rf.pkl'}")
+    return report
+
+
+def main(download: bool, min_year: int) -> None:
+    if download:
+        print("Downloading Kaggle dataset...")
+        download_kaggle_dataset()
+
+    year_dirs = find_year_dirs(KAGGLE_DIR, min_year=min_year)
+    if not year_dirs:
+        year_dirs = find_year_dirs(RAW_DIR, min_year=min_year)
+    if not year_dirs:
+        raise SystemExit(
+            "No vct_* data folders found. Run with --download or place raw data under server/data/kaggle/"
+        )
+
+    print(f"Using {len(year_dirs)} season folders: {[p.name for p in year_dirs]}", flush=True)
+
+    print("Loading match results...", flush=True)
+    scores = normalize_scores(
+        load_concat_csv(year_dirs, "matches", "scores.csv")
+    )
+    print("Loading player stats...", flush=True)
+    player_stats = load_concat_csv(year_dirs, "players_stats", "players_stats.csv")
+
+    rebuild_pipeline(scores, player_stats, tune=True)
 
 
 if __name__ == "__main__":
