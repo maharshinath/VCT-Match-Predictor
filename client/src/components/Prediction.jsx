@@ -2,10 +2,8 @@ import { useEffect, useState } from 'react'
 import MapPredictions from './MapPredictions'
 import TeamRoster from './TeamRoster'
 import TeamStatsDashboard from './TeamDashboard'
+import { logoUrl, DEFAULT_LOGO } from '../config'
 import '../css/Prediction.css'
-
-const API_ORIGIN = 'http://127.0.0.1:5001'
-const DEFAULT_LOGO = `${API_ORIGIN}/static/logos/default-logo.svg`
 
 const TABS = [
   { id: 'maps', label: 'Map Predictions' },
@@ -14,11 +12,6 @@ const TABS = [
   { id: 'betting', label: 'Betting' },
   { id: 'roster', label: 'Roaster' },
 ]
-
-function logoUrl(path) {
-  if (!path) return DEFAULT_LOGO
-  return path.startsWith('/') ? `${API_ORIGIN}${path}` : `${API_ORIGIN}/${path}`
-}
 
 function plainRecTitle(rec, tipTeam) {
   if (rec === 'bet' && tipTeam) return `Worth a look on ${tipTeam}`

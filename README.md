@@ -153,6 +153,10 @@ npm run dev
 
 Restart Flask after retraining so it loads the new `rf.pkl`.
 
+### Deploy (Render)
+
+See [docs/DEPLOY_RENDER.md](docs/DEPLOY_RENDER.md) — Blueprint in `render.yaml` (API + static site).
+
 ### Tests
 
 ```bash

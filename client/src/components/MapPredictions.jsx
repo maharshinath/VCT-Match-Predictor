@@ -1,13 +1,6 @@
 import { getMapSplashUrl } from '../data/mapImages'
+import { logoUrl, DEFAULT_LOGO } from '../config'
 import '../css/MapPredictions.css'
-
-const API_ORIGIN = 'http://127.0.0.1:5001'
-const DEFAULT_LOGO = `${API_ORIGIN}/static/logos/default-logo.svg`
-
-function logoUrl(path) {
-  if (!path) return DEFAULT_LOGO
-  return path.startsWith('/') ? `${API_ORIGIN}${path}` : `${API_ORIGIN}/${path}`
-}
 
 function MapPredictions({ team1, team2, mapPredictions, embedded = false }) {
   if (!mapPredictions?.length || !team1 || !team2) return null

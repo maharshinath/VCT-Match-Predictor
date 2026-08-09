@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from flask import Flask, request
+from flask import Flask, request, send_from_directory
 from flask_restful import Api, Resource
 from flask_cors import CORS
 
@@ -9,14 +9,15 @@ from models.RandomForestPredictor import RandomForestPredictor as Predictor
 from roster import get_team_roster
 from vct_config import ALL_STANDARD_MAPS, COMP_POOL_MAPS
 
+SERVER_DIR = Path(__file__).resolve().parent
+CLIENT_DIST = SERVER_DIR.parent / "client" / "dist"
+
 app = Flask(__name__, static_url_path="/static", static_folder="static")
 CORS(app)
 api = Api(app)
 
 _predictor: Predictor | None = None
-SERVER_DIR = Path(__file__).resolve().parent
 METRICS_PATH = SERVER_DIR / "data" / "model_metrics.json"
-
 
 def get_predictor() -> Predictor:
     global _predictor
@@ -172,19 +173,38 @@ class Health(Resource):
 api.add_resource(Health, "/api/health")
 
 
-@app.route("/")
-def home():
-    return {
-        "status": "ok",
-        "message": "VCT Match Predictor API",
-        "endpoints": [
-            "/api/health",
-            "/api/teams",
-            "/api/predict/<team1>/<team2>",
-            "/api/odds/<team1>/<team2>",
-            "/api/matches/upcoming",
-        ],
-    }
+def _spa_enabled() -> bool:
+    return (CLIENT_DIST / "index.html").is_file()
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def spa_or_api_root(path: str):
+    """Serve the Vite build in production; JSON API index when dist is missing."""
+    if path.startswith("api/") or path == "api":
+        return {"error": "Not found"}, 404
+    if path.startswith("static/"):
+        return {"error": "Not found"}, 404
+
+    if _spa_enabled():
+        candidate = CLIENT_DIST / path
+        if path and candidate.is_file():
+            return send_from_directory(CLIENT_DIST, path)
+        return send_from_directory(CLIENT_DIST, "index.html")
+
+    if path in ("", "/"):
+        return {
+            "status": "ok",
+            "message": "VCT Match Predictor API",
+            "endpoints": [
+                "/api/health",
+                "/api/teams",
+                "/api/predict/<team1>/<team2>",
+                "/api/odds/<team1>/<team2>",
+                "/api/matches/upcoming",
+            ],
+        }
+    return {"error": "Frontend not built. Run npm run build in client/."}, 404
 
 
 if __name__ == "__main__":

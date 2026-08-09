@@ -25,7 +25,7 @@ function MakePrediction() {
                 setError(null)
             } catch (err) {
                 console.error(err)
-                setError('Could not load teams. Make sure the backend is running at http://127.0.0.1:5001')
+                setError('Could not load teams. Make sure the API is running.')
             } finally {
                 setLoading(false)
             }

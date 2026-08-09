@@ -63,7 +63,7 @@ function PredictionPage() {
                 if (!cancelled) {
                     console.error(err)
                     setError(
-                        'Could not load this matchup. Make sure the backend is running at http://127.0.0.1:5001'
+                        'Could not load this matchup. Make sure the API is running.'
                     )
                 }
             } finally {
