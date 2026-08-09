@@ -40,9 +40,10 @@ function About() {
                         {metrics.time_ordered_split_accuracy != null && (
                             <> · time-ordered (all matches): {metrics.time_ordered_split_accuracy}%</>
                         )}
-                        . The time-ordered figure is the honest all-match baseline. The Betting tab
-                        compares our win chance to book-implied chances from VLR (not a fixed
-                        confidence cutoff).
+                        {metrics.international_split_accuracy != null && (
+                            <> · international: {metrics.international_split_accuracy}%</>
+                        )}
+                        . The time-ordered figure is the honest all-match baseline for forecasting.
                     </p>
                 )}
             </div>
