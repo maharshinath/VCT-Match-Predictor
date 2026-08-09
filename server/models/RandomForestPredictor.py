@@ -1,7 +1,6 @@
 import os
 import sys
 
-import joblib
 import pandas as pd
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -9,9 +8,12 @@ SERVER_DIR = os.path.join(BASE_DIR, "..")
 if SERVER_DIR not in sys.path:
     sys.path.insert(0, SERVER_DIR)
 
+from feature_engineering import build_live_feature_tracker
 from model_training import add_engineered_features, load_model_bundle
 from map_predictions import MapPredictor
+from odds_vlr import fetch_match_odds
 from prediction_extras import (
+    build_betting_insight,
     build_key_factors,
     compute_agent_diversity,
     compute_recent_form,
@@ -27,65 +29,38 @@ class RandomForestPredictor:
         self.rf_model, self.feature_cols = load_model_bundle(model_path)
         self.team_data = pd.read_csv(os.path.join(BASE_DIR, "../csv/team_data.csv"))
         self.match_data = pd.read_csv(os.path.join(BASE_DIR, "../csv/scores.csv"))
+        player_stats_path = os.path.join(BASE_DIR, "../csv/player_stats_merged.csv")
+        if os.path.exists(player_stats_path):
+            self.player_stats = pd.read_csv(player_stats_path)
+        else:
+            vlr_path = os.path.join(BASE_DIR, "../data/vlr_player_stats.csv")
+            self.player_stats = pd.read_csv(vlr_path) if os.path.exists(vlr_path) else pd.DataFrame()
+        self.feature_tracker = build_live_feature_tracker(
+            self.match_data,
+            self.player_stats,
+            regions={
+                str(team): str(region)
+                for team, region in zip(self.team_data["Team"], self.team_data.get("Region", []))
+                if pd.notna(region) and str(region).strip()
+            },
+        )
         self.map_predictor = MapPredictor()
         self.recent_form = compute_recent_form(self.match_data)
         self.agent_diversity = compute_agent_diversity()
 
-    def get_past_matches(self, team1, team2):
-        match_data = self.match_data.dropna()
-        filtered_df = match_data[
-            (match_data["Match Name"] == team1 + " vs " + team2)
-            | (match_data["Match Name"] == team2 + " vs " + team1)
-        ]
-        matches = set()
-        for i in range(len(filtered_df) - 1, -1, -1):
-            matches.add(filtered_df.iloc[i]["Match Result"])
-        return matches
-
     def get_winrate_team1(self, team1, team2):
-        match_set = self.get_past_matches(team1, team2)
-        if len(match_set) == 0:
-            return None
-        wins = sum(1 for match in match_set if match == (team1 + " won"))
-        return wins / len(match_set) * 100
+        """Rolling head-to-head win rate for team1 vs team2 (last N meetings)."""
+        feat = self.feature_tracker.features_for(team1, team2, tournament=None)
+        return float(feat["Team A Winrate vs B"])
 
     def build_pred_df(self, teama, teamb):
-        a_data = self.team_data.loc[self.team_data["Team"] == teama]
-        b_data = self.team_data.loc[self.team_data["Team"] == teamb]
-
-        if a_data.empty:
+        if teama not in set(self.team_data["Team"]):
             raise ValueError(f"Team '{teama}' not found in team data")
-        if b_data.empty:
+        if teamb not in set(self.team_data["Team"]):
             raise ValueError(f"Team '{teamb}' not found in team data")
 
-        a_row = a_data.iloc[0]
-        b_row = b_data.iloc[0]
-
-        winrate_team1 = self.get_winrate_team1(teama, teamb)
-        if winrate_team1 is None:
-            winrate_team1 = 0
-            winrate_team2 = 0
-        else:
-            winrate_team2 = 100 - winrate_team1
-
-        pred_df = {
-            "Team A Winrate vs B": [winrate_team1],
-            "Team A Winrate": [a_row["Winrate"]],
-            "Team A K/D Ratio": [a_row["K/D Ratio"]],
-            "Team A Average Damage": [a_row["Average Damage"]],
-            "Team A Average Combat Score": [a_row["Average Combat Score"]],
-            "Team A Average First Kills": [a_row["Average First Kills"]],
-            "Team A Average First Deaths Per Round": [a_row["Average First Deaths Per Round"]],
-            "Team B Winrate vs A": [winrate_team2],
-            "Team B Winrate": [b_row["Winrate"]],
-            "Team B K/D Ratio": [b_row["K/D Ratio"]],
-            "Team B Average Damage": [b_row["Average Damage"]],
-            "Team B Average Combat Score": [b_row["Average Combat Score"]],
-            "Team B Average First Kills": [b_row["Average First Kills"]],
-            "Team B Average First Deaths Per Round": [b_row["Average First Deaths Per Round"]],
-        }
-
-        df = pd.DataFrame(pred_df)
+        feat = self.feature_tracker.features_for(teama, teamb, tournament=None)
+        df = pd.DataFrame([feat])
         for col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
         df = add_engineered_features(df.fillna(0))
@@ -98,15 +73,34 @@ class RandomForestPredictor:
         p2 = float(self.rf_model.predict_proba(df_21)[0][1])
         return (p1 + (1.0 - p2)) / 2.0
 
-    def predict_match(self, team1: str, team2: str, threshold: float = 0.5) -> dict:
+    def predict_match(
+        self,
+        team1: str,
+        team2: str,
+        threshold: float = 0.5,
+        *,
+        include_odds: bool = True,
+    ) -> dict:
         p1 = self._win_probability_team1(team1, team2)
         p1_pct = round(p1 * 100, 1)
         favored = team1 if p1 >= 0.5 else team2
 
-        feature_df = self.build_pred_df(team1, team2)
+        feat = self.feature_tracker.features_for(team1, team2, tournament=None)
+        feature_row = add_engineered_features(pd.DataFrame([feat]).fillna(0)).iloc[0]
         map_preds = sort_map_predictions(
-            self.map_predictor.predict_maps(team1, team2, p1_pct)
+            [
+                m
+                for m in self.map_predictor.predict_maps(team1, team2, p1_pct)
+                if m.get("in_comp_pool")
+            ]
         )
+
+        odds = None
+        if include_odds:
+            try:
+                odds = fetch_match_odds(team1, team2)
+            except Exception:
+                odds = None
 
         return {
             "team1_win_probability": p1_pct,
@@ -117,7 +111,7 @@ class RandomForestPredictor:
                 team1,
                 team2,
                 favored,
-                feature_df.iloc[0],
+                feature_row,
                 self.recent_form,
                 self.agent_diversity,
             ),
@@ -130,6 +124,7 @@ class RandomForestPredictor:
                 team1: round(self.recent_form.get(team1, 50.0), 1),
                 team2: round(self.recent_form.get(team2, 50.0), 1),
             },
+            "betting": build_betting_insight(team1, team2, p1, odds=odds),
         }
 
     def prediction_probability(self, teama, teamb, threshold=0.5):

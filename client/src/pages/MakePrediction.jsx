@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getTeams } from '../services/api'
 import Matchup from '../components/Matchup'
+import TodayMatches from '../components/TodayMatches'
 import '../css/Dropdowns.css'
 
 function MakePrediction() {
@@ -122,6 +123,8 @@ function MakePrediction() {
                     </button>
                 </div>
             </div>
+
+            <TodayMatches />
         </div>
     )
 }

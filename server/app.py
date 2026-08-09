@@ -7,15 +7,24 @@ from flask_cors import CORS
 
 from models.RandomForestPredictor import RandomForestPredictor as Predictor
 from roster import get_team_roster
-from vct_config import COMP_POOL_MAPS
+from vct_config import ALL_STANDARD_MAPS, COMP_POOL_MAPS
 
 app = Flask(__name__, static_url_path="/static", static_folder="static")
 CORS(app)
 api = Api(app)
 
-predictor = Predictor()
+_predictor: Predictor | None = None
 SERVER_DIR = Path(__file__).resolve().parent
 METRICS_PATH = SERVER_DIR / "data" / "model_metrics.json"
+
+
+def get_predictor() -> Predictor:
+    global _predictor
+    if _predictor is None:
+        print("Loading model and dataset...", flush=True)
+        _predictor = Predictor()
+        print("Model ready.", flush=True)
+    return _predictor
 
 
 def load_model_metrics() -> dict:
@@ -35,21 +44,27 @@ class TeamData(Resource):
     def get(self, team):
         if not team:
             return {"error": "Query Parameter Required"}
+        predictor = get_predictor()
         rows = predictor.team_data[predictor.team_data["Team"] == team]
         return rows.to_dict(orient="records")
 
 
 class TeamsData(Resource):
     def get(self):
-        return predictor.team_data.to_dict(orient="records")
+        return get_predictor().team_data.to_dict(orient="records")
 
 
 class PredictorMatchup(Resource):
     def get(self, team1, team2):
         if not team1 or not team2:
             return {"error": "Both team1 and team2 query parameters are required"}, 400
+        # Default: include odds. ?odds=0 skips VLR scrape for faster responses.
+        odds_flag = request.args.get("odds", "1").lower()
+        include_odds = odds_flag not in ("0", "false", "no")
         try:
-            result = predictor.predict_match(team1, team2)
+            result = get_predictor().predict_match(
+                team1, team2, include_odds=include_odds
+            )
             return {"team1": team1, "team2": team2, **result}, 200
         except ValueError as e:
             return {"error": str(e)}, 400
@@ -57,11 +72,34 @@ class PredictorMatchup(Resource):
             return {"error": f"Prediction failed: {str(e)}"}, 500
 
 
+class MatchOdds(Resource):
+    def get(self, team1, team2):
+        if not team1 or not team2:
+            return {"error": "Both team1 and team2 are required"}, 400
+        from odds_vlr import fetch_match_odds
+        from prediction_extras import build_betting_insight
+
+        try:
+            p1 = get_predictor()._win_probability_team1(team1, team2)
+            odds = fetch_match_odds(team1, team2)
+            betting = build_betting_insight(team1, team2, p1, odds=odds)
+            return {
+                "team1": team1,
+                "team2": team2,
+                "odds": odds,
+                "betting": betting,
+            }, 200
+        except ValueError as e:
+            return {"error": str(e)}, 400
+        except Exception as e:
+            return {"error": f"Odds lookup failed: {str(e)}"}, 500
+
+
 class MatchupData(Resource):
     def get(self, team1, team2):
         if not team1 or not team2:
             return {"error": "Both team1 and team2 query parameters are required"}, 400
-        data = predictor.build_pred_df(team1, team2)
+        data = get_predictor().build_pred_df(team1, team2)
         return data.to_dict(orient="records")
 
 
@@ -69,6 +107,7 @@ class TeamRoster(Resource):
     def get(self, team):
         if not team:
             return {"error": "Team name is required"}, 400
+        predictor = get_predictor()
         rows = predictor.team_data[predictor.team_data["Team"] == team]
         if rows.empty:
             return {"error": f"Team '{team}' not found"}, 404
@@ -79,22 +118,73 @@ class MetaData(Resource):
     def get(self):
         return {
             "comp_pool_maps": COMP_POOL_MAPS,
-            "standard_maps": 12,
+            "standard_maps": len(ALL_STANDARD_MAPS),
             "model_metrics": load_model_metrics(),
         }, 200
+
+
+class TodayMatches(Resource):
+    def get(self):
+        from today_matches import fetch_upcoming_matches
+
+        try:
+            payload = fetch_upcoming_matches()
+            try:
+                known = {
+                    str(t).strip().lower()
+                    for t in get_predictor().team_data["Team"].astype(str)
+                }
+            except Exception:
+                known = set()
+
+            def can_predict(name: str) -> bool:
+                n = (name or "").strip().lower()
+                if n in known:
+                    return True
+                return any(n in k or k in n for k in known if len(n) >= 3)
+
+            for match in payload.get("matches") or []:
+                t1 = match.get("team1", {}).get("name")
+                t2 = match.get("team2", {}).get("name")
+                match["predictable"] = bool(t1 and t2 and can_predict(t1) and can_predict(t2))
+            return payload, 200
+        except Exception as e:
+            return {"error": f"Failed to load upcoming matches: {e}", "matches": []}, 502
 
 
 api.add_resource(TeamData, "/api/info/<team>")
 api.add_resource(TeamsData, "/api/teams")
 api.add_resource(PredictorMatchup, "/api/predict/<team1>/<team2>")
+api.add_resource(MatchOdds, "/api/odds/<team1>/<team2>")
 api.add_resource(MatchupData, "/api/matchup_data/<team1>/<team2>")
 api.add_resource(TeamRoster, "/api/roster/<team>")
 api.add_resource(MetaData, "/api/meta")
+api.add_resource(TodayMatches, "/api/matches/today", "/api/matches/upcoming")
+
+
+
+class Health(Resource):
+    def get(self):
+        ready = _predictor is not None
+        return {"status": "ok", "model_loaded": ready}, 200
+
+
+api.add_resource(Health, "/api/health")
 
 
 @app.route("/")
 def home():
-    return "<div></div>"
+    return {
+        "status": "ok",
+        "message": "VCT Match Predictor API",
+        "endpoints": [
+            "/api/health",
+            "/api/teams",
+            "/api/predict/<team1>/<team2>",
+            "/api/odds/<team1>/<team2>",
+            "/api/matches/upcoming",
+        ],
+    }
 
 
 if __name__ == "__main__":

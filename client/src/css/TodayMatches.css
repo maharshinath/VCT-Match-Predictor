@@ -1,0 +1,176 @@
+.today-matches {
+  width: 100%;
+  max-width: 720px;
+  margin-top: var(--spacing-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  text-align: left;
+}
+
+.today-matches__header h2 {
+  margin: 0;
+  font-size: var(--font-size-2xl);
+  color: var(--color-text-primary);
+}
+
+.today-matches__header p {
+  margin: var(--spacing-xs) 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.today-matches__msg {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.today-matches__msg--error {
+  color: var(--color-danger, #e07070);
+}
+
+.today-group h3 {
+  margin: 0 0 var(--spacing-sm);
+  font-size: var(--font-size-sm);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.today-list {
+  list-style: none;
+  margin: 0 0 var(--spacing-lg);
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+}
+
+.today-card {
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-primary);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.today-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.today-pill {
+  font-size: var(--font-size-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--color-border-primary);
+  color: var(--color-text-secondary);
+}
+
+.today-pill--live {
+  border-color: rgba(220, 80, 80, 0.55);
+  color: #f0a0a0;
+}
+
+.today-pill--completed {
+  border-color: rgba(120, 160, 120, 0.45);
+}
+
+.today-event {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.today-card__teams {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-sm);
+}
+
+.today-team {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: var(--font-size-sm);
+  color: var(--color-text-primary);
+  min-width: 0;
+}
+
+.today-team--right {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+.today-team.is-winner {
+  font-weight: var(--font-weight-semibold);
+}
+
+.today-logo {
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+
+.today-score {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: var(--font-size-lg);
+  color: var(--color-text-primary);
+}
+
+.today-vs {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.today-card__actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.today-predict,
+.today-vlr {
+  font-size: var(--font-size-sm);
+  text-decoration: none;
+}
+
+.today-predict {
+  color: var(--color-accent-primary, #7ec8ff);
+}
+
+.today-predict.is-disabled {
+  color: var(--color-text-muted);
+  cursor: default;
+}
+
+.today-vlr {
+  color: var(--color-text-secondary);
+}
+
+@media (max-width: 560px) {
+  .today-card__teams {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .today-team--right {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .today-score {
+    order: -1;
+  }
+}

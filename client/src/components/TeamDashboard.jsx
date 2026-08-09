@@ -64,7 +64,7 @@ const TeamStatsDashboard = ({ team1, team2, matchupData, embedded = false }) => 
   const t2Name = team2.Team
 
   const barData = [
-    { stat: 'Winrate %', [t1Name]: rawData.winA, [t2Name]: rawData.winB },
+    { stat: 'Recent winrate %', [t1Name]: rawData.winA, [t2Name]: rawData.winB },
     { stat: 'K/D', [t1Name]: rawData.kdA, [t2Name]: rawData.kdB },
     { stat: 'Damage', [t1Name]: rawData.dmgA, [t2Name]: rawData.dmgB },
     { stat: 'ACS', [t1Name]: rawData.acsA, [t2Name]: rawData.acsB },
@@ -72,7 +72,7 @@ const TeamStatsDashboard = ({ team1, team2, matchupData, embedded = false }) => 
   ]
 
   const tableRows = [
-    { label: 'Overall winrate', a: rawData.winA, b: rawData.winB, suffix: '%', digits: 1 },
+    { label: 'Recent winrate (last 15)', a: rawData.winA, b: rawData.winB, suffix: '%', digits: 1 },
     { label: 'K/D ratio', a: rawData.kdA, b: rawData.kdB, digits: 3 },
     { label: 'Avg damage', a: rawData.dmgA, b: rawData.dmgB, digits: 1 },
     { label: 'Avg combat score', a: rawData.acsA, b: rawData.acsB, digits: 1 },

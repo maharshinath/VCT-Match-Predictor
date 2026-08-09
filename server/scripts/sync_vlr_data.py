@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -25,9 +24,11 @@ from update_dataset import (  # noqa: E402
     DEFAULT_MIN_YEAR,
     find_year_dirs,
     load_concat_csv,
+    load_merged_player_stats,
     normalize_scores,
     rebuild_pipeline,
 )
+from tournament_utils import ensure_scores_columns  # noqa: E402
 from vlr_ingest import fetch_new_vlr_data, repair_vlr_player_stats, repair_vlr_scores  # noqa: E402
 
 KAGGLE_DIR = SERVER_DIR / "data" / "kaggle"
@@ -60,57 +61,55 @@ def save_vlr_player_stats(df: pd.DataFrame) -> None:
     df.to_csv(VLR_PLAYER_STATS_PATH, index=False)
 
 
-def main(tune: bool, min_year: int) -> None:
+def main(tune: bool, min_year: int, event_ids: list[str] | None) -> None:
     if CSV_DIR.joinpath("scores.csv").exists():
-        scores = pd.read_csv(CSV_DIR / "scores.csv")
+        scores = ensure_scores_columns(pd.read_csv(CSV_DIR / "scores.csv"))
         print(f"Loaded existing scores.csv ({len(scores)} matches)", flush=True)
     else:
         scores, _ = load_kaggle_base(min_year)
         print(f"Loaded Kaggle scores ({len(scores)} matches)", flush=True)
 
-    _, kaggle_players = load_kaggle_base(min_year)
+    try:
+        base_players = load_merged_player_stats(min_year=min_year)
+    except FileNotFoundError:
+        _, base_players = load_kaggle_base(min_year)
     vlr_players = load_vlr_player_stats()
 
     print("Fetching new matches from VLR...", flush=True)
-    new_scores, new_players, new_ids = fetch_new_vlr_data(scores)
+    new_scores, new_players, new_ids = fetch_new_vlr_data(scores, event_ids=event_ids)
 
     if new_scores.empty:
-        print("No new VLR matches to add.", flush=True)
-        return
-
-    print(
-        f"Adding {len(new_scores)} matches ({len(new_players)} player stat rows) from VLR",
-        flush=True,
-    )
-
-    merged_scores = pd.concat([scores, new_scores], ignore_index=True)
-    merged_scores = repair_vlr_scores(merged_scores)
-    merged_scores = merged_scores.drop_duplicates(
-        subset=["Tournament", "Team A", "Team B", "Team A Score", "Team B Score"],
-        keep="first",
-    )
-
-    if not vlr_players.empty:
-        vlr_players = pd.concat([vlr_players, new_players], ignore_index=True)
+        print("No new VLR matches to add. Retraining on existing data...", flush=True)
+        merged_scores = repair_vlr_scores(scores)
+        merged_players = base_players
     else:
-        vlr_players = new_players
-    save_vlr_player_stats(vlr_players)
+        print(
+            f"Adding {len(new_scores)} matches ({len(new_players)} player stat rows) from VLR",
+            flush=True,
+        )
+        merged_scores = pd.concat([scores, new_scores], ignore_index=True)
+        merged_scores = repair_vlr_scores(merged_scores)
+        merged_scores = merged_scores.drop_duplicates(
+            subset=["Tournament", "Team A", "Team B", "Team A Score", "Team B Score"],
+            keep="first",
+        )
 
-    vlr_players = repair_vlr_player_stats(vlr_players)
-    merged_players = pd.concat([kaggle_players, vlr_players], ignore_index=True)
-    merged_players = merged_players.drop_duplicates(
-        subset=["Tournament", "Stage", "Match Type", "Player", "Teams", "Agents"],
-        keep="last",
-    )
+        if not vlr_players.empty:
+            vlr_players = pd.concat([vlr_players, new_players], ignore_index=True)
+        else:
+            vlr_players = new_players
+        save_vlr_player_stats(vlr_players)
+
+        vlr_players = repair_vlr_player_stats(vlr_players)
+        # Drop cached VLR rows already in base_players to avoid double-counting
+        # when base_players already includes vlr_player_stats.csv.
+        merged_players = pd.concat([base_players, vlr_players], ignore_index=True)
+        merged_players = merged_players.drop_duplicates(
+            subset=["Tournament", "Stage", "Match Type", "Player", "Teams", "Agents"],
+            keep="last",
+        )
 
     rebuild_pipeline(merged_scores, merged_players, tune=tune)
-
-    print("Running evaluate_model.py...", flush=True)
-    subprocess.run(
-        [sys.executable, "scripts/evaluate_model.py"],
-        cwd=SERVER_DIR,
-        check=True,
-    )
     print(f"Done. Ingested VLR match ids: {sorted(new_ids)}")
 
 
@@ -127,6 +126,12 @@ if __name__ == "__main__":
         default=DEFAULT_MIN_YEAR,
         help=f"Kaggle seasons from this year (default: {DEFAULT_MIN_YEAR})",
     )
+    parser.add_argument(
+        "--event-ids",
+        nargs="+",
+        metavar="ID",
+        help="Ingest specific VLR event ids (includes ongoing events, e.g. 2765 for Masters London)",
+    )
     args = parser.parse_args()
     os.chdir(SERVER_DIR)
-    main(tune=not args.no_tune, min_year=args.min_year)
+    main(tune=not args.no_tune, min_year=args.min_year, event_ids=args.event_ids)

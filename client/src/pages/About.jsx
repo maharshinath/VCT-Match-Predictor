@@ -2,15 +2,6 @@ import { useEffect, useState } from 'react'
 import { getMeta } from '../services/api'
 import '../css/Home.css'
 
-const PAST_PREDS = [
-    { match: 'Masters Toronto · Jun 17', teams: 'Gen.G vs G2', ok: true },
-    { match: 'Masters Toronto · Jun 17', teams: 'Sentinels vs Fnatic', ok: true },
-    { match: 'Masters Toronto · Jun 20', teams: 'Paper Rex vs Wolves', ok: true },
-    { match: 'Masters Toronto · Jun 20', teams: 'G2 vs Fnatic', ok: false },
-    { match: 'Masters Toronto · Jun 21', teams: 'Wolves vs Fnatic', ok: true },
-    { match: 'Masters Toronto · Jun 22', teams: 'Paper Rex vs Fnatic', ok: true },
-]
-
 function About() {
     const [meta, setMeta] = useState(null)
 
@@ -29,9 +20,9 @@ function About() {
 
             <div className="about">
                 <p>
-                    This app predicts VCT match and map winners using a Random Forest trained on
-                    pro match stats — win rates, K/D, damage, ACS, first kills/deaths, and map history.
-                    Map predictions cover all 12 standard Valorant maps.
+                    This app predicts VCT match and map winners using a calibrated Elo + form model trained on
+                    pro match outcomes — rolling Elo, recent win rates, and map history.
+                    Map predictions cover the current competitive pool plus standard maps (including Summit).
                 </p>
                 <p>
                     Dataset:{' '}
@@ -47,28 +38,14 @@ function About() {
                     <p>
                         Model accuracy — random split: {metrics.random_split_accuracy}%
                         {metrics.time_ordered_split_accuracy != null && (
-                            <> · time-ordered split: {metrics.time_ordered_split_accuracy}%</>
+                            <> · time-ordered (all matches): {metrics.time_ordered_split_accuracy}%</>
                         )}
-                        . The time-ordered figure is a better proxy for real forecasting.
+                        . The time-ordered figure is the honest all-match baseline. The Betting tab
+                        compares our win chance to book-implied chances from VLR (not a fixed
+                        confidence cutoff).
                     </p>
                 )}
             </div>
-
-            <section className="about-predictions">
-                <h2>Past predictions</h2>
-                <ul className="preds-list">
-                    {PAST_PREDS.map((p) => (
-                        <li key={`${p.match}-${p.teams}`}>
-                            <span>
-                                <strong>{p.match}</strong> — {p.teams}
-                            </span>
-                            <span className={p.ok ? 'result-ok' : 'result-miss'}>
-                                {p.ok ? '✓' : '✗'}
-                            </span>
-                        </li>
-                    ))}
-                </ul>
-            </section>
         </div>
     )
 }

@@ -20,7 +20,7 @@ function MapPredictions({ team1, team2, mapPredictions, embedded = false }) {
     <section className={`map-predictions${embedded ? ' map-predictions--embedded' : ''}`}>
       <h4>Map Predictions</h4>
       <p className="map-predictions-intro">
-        If each map is played — who is more likely to win? Maps listed A–Z.
+        Per-map win odds on the current competitive map pool (7 maps).
       </p>
       <ul className="map-prediction-list">
         {sortedMaps.map((entry) => {

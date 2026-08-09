@@ -22,6 +22,13 @@ import pandas as pd
 SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVER_DIR))
 
+from feature_engineering import (  # noqa: E402
+    PLAYER_STAT_KEYS,
+    PLAYER_STAT_SOURCE_COLUMNS,
+    build_live_feature_tracker,
+    build_match_feature_rows,
+    team_profile_from_tracker,
+)
 from model_training import (  # noqa: E402
     FEATURE_COLS,
     create_order_invariant_data,
@@ -33,6 +40,7 @@ CSV_DIR = SERVER_DIR / "csv"
 MODEL_DIR = SERVER_DIR / "models"
 KAGGLE_DIR = SERVER_DIR / "data" / "kaggle"
 RAW_DIR = SERVER_DIR / "data" / "raw"
+VLR_PLAYER_STATS_PATH = SERVER_DIR / "data" / "vlr_player_stats.csv"
 
 TEAM_ALIASES = {
     "Mega Minors": "NRG",
@@ -65,7 +73,7 @@ EXCLUDED_TEAMS = {
     "Precise Defeat",
 }
 
-PRO_TOURNAMENT_PATTERN = r"Valorant Champions|Valorant Masters|^VCT \d{4}:"
+PRO_TOURNAMENT_PATTERN = r"Valorant Champions|Valorant Masters|Esports World Cup|VCT \d{4}:"
 DEFAULT_MIN_YEAR = 2021
 
 # Teams that only appear in global events (Masters/Champions) without a regional VCT tag
@@ -93,17 +101,12 @@ TEAM_REGION_OVERRIDES = {
     "XSET": "AMER",
 }
 
-SCORES_COLUMNS = [
-    "Tournament",
-    "Stage",
-    "Match Type",
-    "Match Name",
-    "Team A",
-    "Team B",
-    "Team A Score",
-    "Team B Score",
-    "Match Result",
-]
+from map_predictions import load_merged_map_scores, refresh_map_csvs  # noqa: E402
+from tournament_utils import (  # noqa: E402
+    ensure_scores_columns,
+    is_pro_tournament,
+    sort_scores_chronologically,
+)
 
 
 def download_kaggle_dataset() -> None:
@@ -154,7 +157,7 @@ def normalize_team(name: str) -> str:
 
 
 def filter_pro_matches(df: pd.DataFrame) -> pd.DataFrame:
-    mask = df["Tournament"].str.contains(PRO_TOURNAMENT_PATTERN, regex=True)
+    mask = df["Tournament"].astype(str).map(is_pro_tournament)
     out = df.loc[mask].copy()
     for col in ("Team A", "Team B"):
         out = out[~out[col].isin(EXCLUDED_TEAMS)]
@@ -175,64 +178,53 @@ def normalize_scores(df: pd.DataFrame) -> pd.DataFrame:
 
     out["Match Result"] = out.apply(fix_result, axis=1)
     out["Match Name"] = out["Team A"] + " vs " + out["Team B"]
-    return out[SCORES_COLUMNS]
+    if "Match Date" not in out.columns:
+        out["Match Date"] = None
+    return ensure_scores_columns(out)
 
 
-def build_h2h_lookup(scores: pd.DataFrame) -> dict[tuple[str, str], tuple[float, float]]:
-    """Map (team_a, team_b) -> (team_a h2h %, team_b h2h %)."""
-    lookup: dict[tuple[str, str], tuple[float, float]] = {}
-    pair_df = scores.copy()
-    pair_df["pair"] = pair_df.apply(
-        lambda r: tuple(sorted((r["Team A"], r["Team B"]))), axis=1
-    )
-    for (team1, team2), group in pair_df.groupby("pair", sort=False):
-        results = group["Match Result"].dropna().tolist()
-        if not results:
-            lookup[(team1, team2)] = (0.0, 0.0)
-            lookup[(team2, team1)] = (0.0, 0.0)
-            continue
-        wins1 = sum(1 for r in results if r == f"{team1} won")
-        rate1 = wins1 / len(results) * 100
-        rate2 = 100 - rate1
-        lookup[(team1, team2)] = (rate1, rate2)
-        lookup[(team2, team1)] = (rate2, rate1)
-    return lookup
+def load_merged_player_stats(min_year: int | None = None) -> pd.DataFrame:
+    """Kaggle base player stats merged with repaired VLR supplements."""
+    from vlr_ingest import repair_vlr_player_stats
 
+    year_dirs = find_year_dirs(KAGGLE_DIR, min_year=min_year)
+    if not year_dirs:
+        year_dirs = find_year_dirs(RAW_DIR, min_year=min_year)
+    if not year_dirs:
+        cached = CSV_DIR / "player_stats_merged.csv"
+        if cached.exists():
+            repaired = repair_vlr_player_stats(pd.read_csv(cached))
+            return repaired
+        raise FileNotFoundError("No Kaggle player stats and no cached player_stats_merged.csv")
 
-def get_team_winrate(scores: pd.DataFrame, team: str) -> float:
-    mask = scores["Match Name"].str.contains(team, regex=False)
-    filtered = scores.loc[mask]
-    total = len(filtered)
-    if total == 0:
-        return 0.0
-    wins = len(filtered[filtered["Match Result"].str.contains(team, regex=False)])
-    return wins / total * 100
+    player_stats = load_concat_csv(year_dirs, "players_stats", "players_stats.csv")
+    if VLR_PLAYER_STATS_PATH.exists():
+        vlr = repair_vlr_player_stats(pd.read_csv(VLR_PLAYER_STATS_PATH))
+        VLR_PLAYER_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        vlr.to_csv(VLR_PLAYER_STATS_PATH, index=False)
+        player_stats = pd.concat([player_stats, vlr], ignore_index=True)
+        player_stats = player_stats.drop_duplicates(
+            subset=["Tournament", "Stage", "Match Type", "Player", "Teams", "Agents"],
+            keep="last",
+        )
+    player_stats["Teams"] = player_stats["Teams"].astype(str).str.strip()
+    return player_stats
 
 
 def aggregate_player_stats(player_stats: pd.DataFrame) -> pd.DataFrame:
-    grouped = (
-        player_stats.groupby("Teams")
-        .agg(
-            {
-                "Kills:Deaths": "mean",
-                "Average Damage Per Round": "mean",
-                "Average Combat Score": "mean",
-                "First Kills": "mean",
-                "First Deaths Per Round": "mean",
-            }
-        )
-        .reset_index()
-        .rename(
-            columns={
-                "Teams": "Team",
-                "Kills:Deaths": "K/D Ratio",
-                "Average Damage Per Round": "Average Damage",
-                "Average Combat Score": "Average Combat Score",
-                "First Kills": "Average First Kills",
-                "First Deaths Per Round": "Average First Deaths Per Round",
-            }
-        )
-    )
+    from feature_engineering import aggregate_player_rows
+
+    stats = player_stats.copy()
+    stats["Teams"] = stats["Teams"].astype(str).str.strip()
+    records: list[dict] = []
+    for team, group in stats.groupby("Teams", sort=False):
+        row = aggregate_player_rows(group)
+        if row:
+            records.append({"Team": team, **row})
+    grouped = pd.DataFrame(records)
+    for key in PLAYER_STAT_KEYS:
+        if key not in grouped.columns:
+            grouped[key] = None
     return grouped
 
 
@@ -240,13 +232,9 @@ def get_average_player_stats(player_stats: pd.DataFrame, team: str) -> dict | No
     filtered = player_stats[player_stats["Teams"] == team]
     if filtered.empty:
         return None
-    return {
-        "K/D Ratio": filtered["Kills:Deaths"].mean(),
-        "Average Damage": filtered["Average Damage Per Round"].mean(),
-        "Average Combat Score": filtered["Average Combat Score"].mean(),
-        "Average First Kills": filtered["First Kills"].mean(),
-        "Average First Deaths Per Round": filtered["First Deaths Per Round"].mean(),
-    }
+    from feature_engineering import aggregate_player_rows
+
+    return aggregate_player_rows(filtered)
 
 
 def slugify_team(team: str) -> str:
@@ -271,20 +259,6 @@ def load_existing_logo_map() -> dict[str, str]:
         if isinstance(image_path, str) and image_path.startswith("/static/"):
             logo_map[team] = image_path
     return logo_map
-
-
-def build_team_winrates(scores: pd.DataFrame) -> dict[str, float]:
-    wins: dict[str, int] = {}
-    played: dict[str, int] = {}
-    for _, row in scores.iterrows():
-        for team in (row["Team A"], row["Team B"]):
-            played[team] = played.get(team, 0) + 1
-        winner = str(row["Match Result"]).replace(" won", "")
-        wins[winner] = wins.get(winner, 0) + 1
-    return {
-        team: (wins.get(team, 0) / count * 100) if count else 0.0
-        for team, count in played.items()
-    }
 
 
 def active_teams(scores: pd.DataFrame) -> set[str]:
@@ -327,84 +301,47 @@ def build_team_data(scores: pd.DataFrame, player_stats: pd.DataFrame) -> pd.Data
     player_stats = player_stats.copy()
     player_stats["Teams"] = player_stats["Teams"].map(normalize_team)
     teams = active_teams(scores)
+    tracker = build_live_feature_tracker(scores, player_stats)
 
     logo_map = load_existing_logo_map()
-    stat_rows = aggregate_player_stats(player_stats)
-    stat_rows = stat_rows[stat_rows["Team"].isin(teams)].copy()
-    winrates = build_team_winrates(scores)
-
-    stat_rows["Winrate"] = stat_rows["Team"].map(winrates).fillna(0).round(4)
     logos_dir = SERVER_DIR / "static" / "logos"
-
-    def resolve_image_path(team: str) -> str:
-        preferred = logo_filename(team)
-        if (logos_dir / preferred).exists():
-            return f"/static/logos/{preferred}"
-        legacy = logo_map.get(team)
-        if legacy and (logos_dir / Path(legacy).name).exists():
-            return legacy
-        return f"/static/logos/{preferred}"
-
-    stat_rows["Image Path"] = stat_rows["Team"].map(resolve_image_path)
     team_regions = build_team_regions(scores, teams)
-    stat_rows["Region"] = stat_rows["Team"].map(team_regions)
+
+    records = []
+    for team in sorted(teams):
+        profile = team_profile_from_tracker(tracker, team)
+        records.append(
+            {
+                "Team": team,
+                **profile,
+                "Image Path": resolve_image_path(team, logo_map, logos_dir),
+                "Region": team_regions.get(team),
+            }
+        )
+
+    stat_rows = pd.DataFrame(records)
     stat_rows = stat_rows.sort_values("Team").reset_index(drop=True)
     stat_rows["id"] = range(1, len(stat_rows) + 1)
     return stat_rows
 
 
-def build_team_stats_cache(
-    player_stats: pd.DataFrame, teams: set[str]
-) -> dict[str, dict]:
-    agg = aggregate_player_stats(player_stats)
-    agg = agg[agg["Team"].isin(teams)]
-    return {
-        row["Team"]: {
-            "K/D Ratio": row["K/D Ratio"],
-            "Average Damage": row["Average Damage"],
-            "Average Combat Score": row["Average Combat Score"],
-            "Average First Kills": row["Average First Kills"],
-            "Average First Deaths Per Round": row["Average First Deaths Per Round"],
-        }
-        for _, row in agg.iterrows()
-    }
+def resolve_image_path(team: str, logo_map: dict[str, str], logos_dir: Path) -> str:
+    preferred = logo_filename(team)
+    if (logos_dir / preferred).exists():
+        return f"/static/logos/{preferred}"
+    legacy = logo_map.get(team)
+    if legacy and (logos_dir / Path(legacy).name).exists():
+        return legacy
+    return f"/static/logos/{preferred}"
 
 
 def build_match_features(
     scores: pd.DataFrame,
     player_stats: pd.DataFrame,
-    h2h_lookup: dict[tuple[str, str], tuple[float, float]],
-    team_stats: dict[str, dict],
+    *,
+    map_scores: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
-    winrate_cache = build_team_winrates(scores)
-    records = []
-    for _, row in scores.iterrows():
-        team_a = row["Team A"]
-        team_b = row["Team B"]
-        stats_a = team_stats.get(team_a)
-        stats_b = team_stats.get(team_b)
-        if not stats_a or not stats_b:
-            continue
-
-        h2h_a, h2h_b = h2h_lookup.get((team_a, team_b), (0.0, 0.0))
-
-        records.append(
-            {
-                "Tournament": row["Tournament"],
-                "Stage": row["Stage"],
-                "Match Type": row["Match Type"],
-                "Team A": team_a,
-                "Team B": team_b,
-                "Team A Winrate vs B": h2h_a,
-                "Team A Winrate": winrate_cache[team_a],
-                **{f"Team A {k}": v for k, v in stats_a.items()},
-                "Team B Winrate vs A": h2h_b,
-                "Team B Winrate": winrate_cache[team_b],
-                **{f"Team B {k}": v for k, v in stats_b.items()},
-                "Team A Win": int(str(row["Match Result"]) == f"{team_a} won"),
-            }
-        )
-    return pd.DataFrame(records)
+    return build_match_feature_rows(scores, player_stats, map_scores=map_scores)
 
 
 def rebuild_pipeline(
@@ -413,49 +350,52 @@ def rebuild_pipeline(
     *,
     tune: bool = True,
 ) -> dict:
-    """Rebuild team CSVs, filtered matches, and retrain the Random Forest."""
+    """Rebuild team CSVs, filtered matches, and retrain the match-winner model."""
+    scores = sort_scores_chronologically(scores)
     player_stats = player_stats.copy()
     player_stats["Teams"] = player_stats["Teams"].map(normalize_team)
-    teams = active_teams(scores)
+
+    print("Refreshing map stats...", flush=True)
+    refresh_map_csvs()
+    try:
+        map_scores = load_merged_map_scores()
+    except FileNotFoundError:
+        map_scores = None
 
     print("Building team_data.csv...", flush=True)
     team_data = build_team_data(scores, player_stats)
-    print("Computing head-to-head rates...", flush=True)
-    h2h_lookup = build_h2h_lookup(scores)
-    team_stats_cache = build_team_stats_cache(player_stats, teams)
-    print("Building filtered_matches.csv...", flush=True)
-    filtered_matches = build_match_features(
-        scores, player_stats, h2h_lookup, team_stats_cache
-    )
-    print("Training model...", flush=True)
+    print("Building filtered_matches.csv (point-in-time features)...", flush=True)
+    filtered_matches = build_match_features(scores, player_stats, map_scores=map_scores)
+    print("Training model (time-ordered split)...", flush=True)
 
     CSV_DIR.mkdir(parents=True, exist_ok=True)
     scores.to_csv(CSV_DIR / "scores.csv", index=False)
+    player_stats.to_csv(CSV_DIR / "player_stats_merged.csv", index=False)
     team_data.to_csv(CSV_DIR / "team_data.csv", index=False)
     filtered_matches.to_csv(CSV_DIR / "filtered_matches.csv", index=False)
 
-    model, report = train_match_model(filtered_matches, tune=tune)
+    model, report = train_match_model(filtered_matches, tune=tune, time_ordered=True)
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
-    save_model_bundle(MODEL_DIR / "rf.pkl", model)
+    save_model_bundle(
+        MODEL_DIR / "rf.pkl",
+        model,
+        feature_cols=report.get("feature_cols"),
+        metrics={
+            "holdout_test_accuracy": report["test_accuracy"],
+            "train_accuracy": report["train_accuracy"],
+            "refit_full": report.get("refit_full", False),
+            "algorithm": report.get("algorithm"),
+        },
+    )
     print(f"Train accuracy: {report['train_accuracy']}%")
     print(f"Holdout test accuracy: {report['test_accuracy']}%")
     print(f"Best params: {report['best_params']}")
+    print(f"Algorithm: {report.get('algorithm', 'unknown')}")
 
-    metrics_path = SERVER_DIR / "data" / "model_metrics.json"
-    metrics_path.parent.mkdir(parents=True, exist_ok=True)
-    metrics_path.write_text(
-        json.dumps(
-            {
-                "random_split_accuracy": report["test_accuracy"],
-                "time_ordered_split_accuracy": report["test_accuracy"],
-                "deployed_model_holdout_accuracy": report["test_accuracy"],
-                "feature_count": report["feature_count"],
-                "best_params": report["best_params"],
-                "note": "Holdout from stratified 80/20 split after hyperparameter tuning.",
-            },
-            indent=2,
-        ),
-        encoding="utf-8",
+    subprocess.run(
+        [sys.executable, "scripts/evaluate_model.py"],
+        cwd=SERVER_DIR,
+        check=True,
     )
 
     print(f"scores.csv: {len(scores)} matches")

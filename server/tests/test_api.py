@@ -32,7 +32,7 @@ def test_predict_includes_maps(client):
     assert r.status_code == 200
     data = r.get_json()
     assert "map_predictions" in data
-    assert len(data["map_predictions"]) == 12
+    assert len(data["map_predictions"]) == 7
     assert "team1_win_probability" in data
     assert "confidence" in data
     assert "series_predictions" in data

@@ -7,7 +7,9 @@ from pathlib import Path
 
 import pandas as pd
 
-from vct_config import COMP_POOL_MAPS
+from tournament_utils import is_pro_tournament, shrink_probability
+from vct_config import COMP_POOL_MAPS, H2H_MIN_TRUST_MATCHES
+from vlr_ingest import VLR_MAPS_PATH, load_vlr_maps
 
 SERVER_DIR = Path(__file__).resolve().parent
 CSV_DIR = SERVER_DIR / "csv"
@@ -27,11 +29,10 @@ STANDARD_MAPS = [
     "Lotus",
     "Pearl",
     "Split",
+    "Summit",
     "Sunset",
     "Abyss",
 ]
-
-PRO_TOURNAMENT_PATTERN = r"Valorant Champions|Valorant Masters|^VCT \d{4}:"
 
 TEAM_ALIASES = {
     "Mega Minors": "NRG",
@@ -61,17 +62,39 @@ def load_maps_scores(year_dirs: list[Path]) -> pd.DataFrame:
         if path.exists():
             frames.append(pd.read_csv(path))
     if not frames:
-        raise FileNotFoundError("No maps_scores.csv found")
+        return pd.DataFrame()
     return pd.concat(frames, ignore_index=True).drop_duplicates()
 
 
 def filter_pro_map_rows(df: pd.DataFrame) -> pd.DataFrame:
-    mask = df["Tournament"].str.contains(PRO_TOURNAMENT_PATTERN, regex=True, na=False)
+    if df.empty:
+        return df
+    mask = df["Tournament"].astype(str).map(is_pro_tournament)
     out = df.loc[mask].copy()
     out = out[out["Map"].isin(STANDARD_MAPS)]
     for col in ("Team A", "Team B"):
         out[col] = out[col].map(normalize_team)
     return out
+
+
+def load_merged_map_scores(min_year: int = 2021) -> pd.DataFrame:
+    frames = []
+    year_dirs = find_year_dirs(KAGGLE_DIR, min_year) or find_year_dirs(RAW_DIR, min_year)
+    if year_dirs:
+        kaggle_maps = load_maps_scores(year_dirs)
+        if not kaggle_maps.empty:
+            frames.append(kaggle_maps)
+    vlr_maps = load_vlr_maps()
+    if not vlr_maps.empty:
+        frames.append(vlr_maps)
+    if not frames:
+        raise FileNotFoundError("No map score data found (Kaggle or VLR)")
+    merged = pd.concat(frames, ignore_index=True)
+    merged = merged.drop_duplicates(
+        subset=["Tournament", "Stage", "Match Type", "Map", "Team A", "Team B", "Team A Score", "Team B Score"],
+        keep="last",
+    )
+    return filter_pro_map_rows(merged)
 
 
 def build_map_team_stats(df: pd.DataFrame) -> pd.DataFrame:
@@ -140,18 +163,26 @@ def build_map_h2h_stats(df: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows).sort_values(["Map", "Team A"]).reset_index(drop=True)
 
 
-def write_map_csvs(min_year: int = 2021) -> None:
-    year_dirs = find_year_dirs(KAGGLE_DIR, min_year) or find_year_dirs(RAW_DIR, min_year)
-    maps_df = filter_pro_map_rows(load_maps_scores(year_dirs))
+def refresh_map_csvs(min_year: int = 2021) -> None:
+    try:
+        maps_df = load_merged_map_scores(min_year=min_year)
+    except FileNotFoundError:
+        if MAP_STATS_PATH.exists() and MAP_H2H_PATH.exists():
+            return
+        raise
     CSV_DIR.mkdir(parents=True, exist_ok=True)
     build_map_team_stats(maps_df).to_csv(MAP_STATS_PATH, index=False)
     build_map_h2h_stats(maps_df).to_csv(MAP_H2H_PATH, index=False)
 
 
+def write_map_csvs(min_year: int = 2021) -> None:
+    refresh_map_csvs(min_year=min_year)
+
+
 class MapPredictor:
     def __init__(self) -> None:
         if not MAP_STATS_PATH.exists():
-            write_map_csvs()
+            refresh_map_csvs()
         self.team_stats = pd.read_csv(MAP_STATS_PATH)
         self.h2h_stats = (
             pd.read_csv(MAP_H2H_PATH) if MAP_H2H_PATH.exists() else pd.DataFrame()
@@ -170,9 +201,9 @@ class MapPredictor:
             return default
         return (entry["wins"] + 1) / (entry["played"] + 2)
 
-    def _map_h2h_rate(self, team1: str, team2: str, map_name: str) -> float | None:
+    def _map_h2h_rate(self, team1: str, team2: str, map_name: str) -> tuple[float | None, int]:
         if self.h2h_stats.empty:
-            return None
+            return None, 0
         pair = tuple(sorted((team1, team2)))
         row = self.h2h_stats[
             (self.h2h_stats["Team A"] == pair[0])
@@ -180,22 +211,25 @@ class MapPredictor:
             & (self.h2h_stats["Map"] == map_name)
         ]
         if row.empty:
-            return None
+            return None, 0
         r = row.iloc[0]
-        return float(r["Team A Winrate"]) / 100.0 if team1 == pair[0] else 1.0 - float(r["Team A Winrate"]) / 100.0
+        played = int(r["Played"])
+        raw = float(r["Team A Winrate"]) / 100.0 if team1 == pair[0] else 1.0 - float(r["Team A Winrate"]) / 100.0
+        return shrink_probability(raw, played, H2H_MIN_TRUST_MATCHES), played
 
     def predict_maps(self, team1: str, team2: str, overall_team1_prob: float) -> list[dict]:
         overall_p1 = overall_team1_prob / 100.0 if overall_team1_prob > 1 else overall_team1_prob
         predictions = []
 
-        for map_name in STANDARD_MAPS:
+        for map_name in COMP_POOL_MAPS:
             r1 = self._smoothed_rate(team1, map_name, default=overall_p1)
             r2 = self._smoothed_rate(team2, map_name, default=1.0 - overall_p1)
             map_p = r1 / (r1 + r2) if (r1 + r2) > 0 else 0.5
 
-            h2h_p = self._map_h2h_rate(team1, team2, map_name)
+            h2h_p, h2h_played = self._map_h2h_rate(team1, team2, map_name)
             if h2h_p is not None:
-                map_p = 0.6 * map_p + 0.4 * h2h_p
+                h2h_weight = min(1.0, h2h_played / H2H_MIN_TRUST_MATCHES) * 0.4
+                map_p = (1.0 - h2h_weight) * map_p + h2h_weight * h2h_p
 
             t1_entry = self._team_lookup.get((team1, map_name), {"played": 0})
             t2_entry = self._team_lookup.get((team2, map_name), {"played": 0})
@@ -225,5 +259,5 @@ class MapPredictor:
 
 
 if __name__ == "__main__":
-    write_map_csvs()
+    refresh_map_csvs()
     print(f"Wrote {MAP_STATS_PATH} and {MAP_H2H_PATH}")

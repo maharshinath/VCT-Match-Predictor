@@ -1,93 +1,159 @@
-"""
-Evaluate model with random split and time-ordered (by row index) split.
-Writes metrics to server/data/model_metrics.json
-
-Usage (from server/):
-  python scripts/evaluate_model.py
-"""
+"""Evaluate model with random, time-ordered, and segment-specific splits."""
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 import pandas as pd
-from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import RandomizedSearchCV, train_test_split
+
+from sklearn.model_selection import train_test_split
 
 SERVER_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SERVER_DIR))
 
 from model_training import (  # noqa: E402
-    FEATURE_COLS,
-    RF_PARAM_DISTRIBUTION,
-    create_order_invariant_data,
+    _fit_elo_anchored,
     load_model_bundle,
+    probability_scores,
+    walk_forward_accuracy,
 )
+from tournament_utils import is_international_tournament  # noqa: E402
+from vct_config import BETTING_CONFIDENCE_GATE  # noqa: E402
 
 METRICS_PATH = SERVER_DIR / "data" / "model_metrics.json"
 
 
-def _fit_eval_model(train_x, train_y) -> RandomForestClassifier:
-    search = RandomizedSearchCV(
-        RandomForestClassifier(random_state=42, n_jobs=-1),
-        param_distributions=RF_PARAM_DISTRIBUTION,
-        n_iter=12,
-        cv=3,
-        scoring="accuracy",
-        random_state=42,
-        n_jobs=-1,
-    )
-    search.fit(train_x, train_y)
-    return search.best_estimator_
+ELO_FEATURE_COLS = [
+    "Team A Elo",
+    "Team B Elo",
+    "Team A Winrate",
+    "Team B Winrate",
+]
 
 
-def evaluate_random_split(df: pd.DataFrame, test_size: float = 0.2) -> float:
-    augmented = create_order_invariant_data(df)
-    x = augmented[FEATURE_COLS]
-    y = augmented["Team A Win"].astype(int)
+def is_regional_vct(tournament: str) -> bool:
+    return bool(re.match(r"^VCT \d{4}:", str(tournament)))
+
+
+def _evaluate_random_split(df: pd.DataFrame, test_frac: float = 0.2) -> dict[str, float] | None:
+    if len(df) < 20:
+        return None
+    x = df[ELO_FEATURE_COLS]
+    y = df["Team A Win"].astype(int)
     x_train, x_test, y_train, y_test = train_test_split(
-        x, y, test_size=test_size, random_state=42, stratify=y
+        x, y, test_size=test_frac, random_state=42, stratify=y
     )
-    model = _fit_eval_model(x_train, y_train)
-    pred = model.predict(x_test)
-    return accuracy_score(y_test, pred)
+    model, _ = _fit_elo_anchored(x_train, y_train, x_val=x_test, y_val=y_test)
+    return probability_scores(model, x_test, y_test)
 
 
-def evaluate_time_split(df: pd.DataFrame, test_frac: float = 0.2) -> float:
-    augmented = create_order_invariant_data(df)
-    split = int(len(augmented) * (1 - test_frac))
-    train = augmented.iloc[:split]
-    test = augmented.iloc[split:]
-    model = _fit_eval_model(train[FEATURE_COLS], train["Team A Win"].astype(int))
-    pred = model.predict(test[FEATURE_COLS])
-    return accuracy_score(test["Team A Win"].astype(int), pred)
+def _evaluate_segment(df: pd.DataFrame, test_frac: float = 0.2) -> dict[str, float] | None:
+    if len(df) < 20:
+        return None
+    split = max(1, int(len(df) * (1 - test_frac)))
+    train_base = df.iloc[:split]
+    test_base = df.iloc[split:]
+    if train_base.empty or test_base.empty:
+        return None
+    model, _ = _fit_elo_anchored(
+        train_base[ELO_FEATURE_COLS],
+        train_base["Team A Win"].astype(int),
+        x_val=test_base[ELO_FEATURE_COLS],
+        y_val=test_base["Team A Win"].astype(int),
+    )
+    scores = probability_scores(
+        model, test_base[ELO_FEATURE_COLS], test_base["Team A Win"].astype(int)
+    )
+    probs = model.predict_proba(test_base[ELO_FEATURE_COLS])[:, 1]
+    y = test_base["Team A Win"].astype(int).to_numpy()
+    scores["selective"] = _selective_accuracy(probs, y, BETTING_CONFIDENCE_GATE)
+    return scores
+
+
+def _selective_accuracy(
+    probs,
+    y_true,
+    gate: float,
+) -> dict[str, float] | None:
+    """Accuracy when only betting the favorite at/above the confidence gate."""
+    import numpy as np
+
+    probs = np.asarray(probs, dtype=float)
+    y_true = np.asarray(y_true, dtype=int)
+    favored = np.maximum(probs, 1.0 - probs)
+    mask = favored >= gate
+    coverage = float(mask.mean()) if len(mask) else 0.0
+    if not mask.any():
+        return {"accuracy": None, "coverage": round(coverage * 100, 1), "n": 0}
+    preds = (probs[mask] >= 0.5).astype(int)
+    return {
+        "accuracy": float(accuracy_score(y_true[mask], preds)),
+        "coverage": round(coverage * 100, 1),
+        "n": int(mask.sum()),
+    }
 
 
 def main() -> None:
     matches_path = SERVER_DIR / "csv" / "filtered_matches.csv"
     df = pd.read_csv(matches_path)
     deployed, feature_cols = load_model_bundle(SERVER_DIR / "models" / "rf.pkl")
+    import joblib
 
-    random_acc = evaluate_random_split(df)
-    time_acc = evaluate_time_split(df)
+    bundle = joblib.load(SERVER_DIR / "models" / "rf.pkl")
+    bundle_metrics = bundle.get("metrics", {}) if isinstance(bundle, dict) else {}
 
-    augmented = create_order_invariant_data(df)
-    split = int(len(augmented) * 0.8)
-    holdout = augmented.iloc[split:]
-    deployed_acc = accuracy_score(
-        holdout["Team A Win"].astype(int),
-        deployed.predict(holdout[feature_cols]),
-    )
+    random_scores = _evaluate_random_split(df)
+    all_scores = _evaluate_segment(df)
+    intl_df = df[df["Tournament"].astype(str).map(is_international_tournament)]
+    vct_df = df[df["Tournament"].astype(str).map(is_regional_vct)]
+    intl_scores = _evaluate_segment(intl_df)
+    vct_scores = _evaluate_segment(vct_df)
+
+    # Prefer the true time-ordered holdout from training when the deployed model
+    # was refit on all rows (circular holdout would read ~100%).
+    if bundle_metrics.get("refit_full") and bundle_metrics.get("holdout_test_accuracy") is not None:
+        deployed_acc = float(bundle_metrics["holdout_test_accuracy"]) / 100.0
+    else:
+        split = int(len(df) * 0.8)
+        holdout = df.iloc[split:]
+        cols = [c for c in feature_cols if c in holdout.columns]
+        deployed_probs = deployed.predict_proba(holdout[cols])[:, 1]
+        deployed_preds = (deployed_probs >= 0.5).astype(int)
+        deployed_acc = accuracy_score(holdout["Team A Win"].astype(int), deployed_preds)
+
+    wf = walk_forward_accuracy(df)
+    selective = (all_scores or {}).get("selective") if all_scores else None
 
     metrics = {
-        "random_split_accuracy": round(random_acc * 100, 1),
-        "time_ordered_split_accuracy": round(time_acc * 100, 1),
+        "random_split_accuracy": round(random_scores["accuracy"] * 100, 1) if random_scores else None,
+        "time_ordered_split_accuracy": round(all_scores["accuracy"] * 100, 1) if all_scores else None,
+        "vct_regional_split_accuracy": round(vct_scores["accuracy"] * 100, 1) if vct_scores else None,
+        "international_split_accuracy": round(intl_scores["accuracy"] * 100, 1) if intl_scores else None,
+        "brier_score": round(all_scores["brier_score"], 4) if all_scores else None,
+        "log_loss": round(all_scores["log_loss"], 4) if all_scores else None,
         "deployed_model_holdout_accuracy": round(deployed_acc * 100, 1),
+        "walk_forward_accuracy": (
+            round(wf["walk_forward_accuracy"] * 100, 1) if wf else None
+        ),
+        "selective_65_accuracy": (
+            round(selective["accuracy"] * 100, 1)
+            if selective and selective.get("accuracy") is not None
+            else None
+        ),
+        "selective_65_coverage": selective.get("coverage") if selective else None,
+        "selective_65_n": selective.get("n") if selective else None,
+        "betting_confidence_gate": round(BETTING_CONFIDENCE_GATE * 100, 1),
         "feature_count": len(feature_cols),
-        "note": "Time-ordered split is a better proxy for real forecasting than random split.",
+        "note": (
+            "Segment splits use time-ordered holdout. "
+            "selective_65_* = accuracy/coverage when only picking favorites "
+            f"at confidence ≥ {BETTING_CONFIDENCE_GATE*100:.0f}%. "
+            "Lower Brier score = better calibrated probabilities."
+        ),
     }
     METRICS_PATH.parent.mkdir(parents=True, exist_ok=True)
     METRICS_PATH.write_text(json.dumps(metrics, indent=2), encoding="utf-8")

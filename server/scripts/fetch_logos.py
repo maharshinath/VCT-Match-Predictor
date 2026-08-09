@@ -95,6 +95,35 @@ def download_logo(url: str, dest: Path) -> bool:
         return False
 
 
+# White-on-transparent logos from VLR disappear on the app's white logo plates
+LIGHT_LOGO_TEAMS = {"NRG", "Paper Rex"}
+
+
+def fix_light_logo(dest: Path, *, force: bool = False) -> None:
+    """Composite white-on-transparent logos onto a dark plate."""
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+
+    try:
+        src = Image.open(dest).convert("RGBA")
+    except OSError:
+        return
+
+    pixels = src.getdata()
+    light = sum(
+        1 for r, g, b, a in pixels if a > 10 and r > 200 and g > 200 and b > 200
+    )
+    dark = sum(1 for r, g, b, a in pixels if a > 10 and r < 50 and g < 50 and b < 50)
+    if not force and (light == 0 or dark > light // 4):
+        return
+
+    bg = Image.new("RGBA", src.size, (17, 17, 17, 255))
+    bg.paste(src, (0, 0), src)
+    bg.save(dest, optimize=True)
+
+
 def main(dry_run: bool) -> None:
     LOGO_DIR.mkdir(parents=True, exist_ok=True)
     team_data = pd.read_csv(TEAM_DATA_PATH)
@@ -130,6 +159,8 @@ def main(dry_run: bool) -> None:
             continue
 
         if download_logo(url, dest):
+            if team in LIGHT_LOGO_TEAMS:
+                fix_light_logo(dest, force=True)
             downloaded += 1
             team_data.loc[team_data["Team"] == row["Team"], "Image Path"] = image_path
             print(f"OK  {team} -> {filename}")

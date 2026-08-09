@@ -52,3 +52,12 @@ export const getMeta = async () => {
     if (!response.ok) throw new Error('Failed to load meta')
     return await response.json()
 }
+
+
+export const getTodayMatches = async () => getUpcomingMatches()
+
+export const getUpcomingMatches = async () => {
+    const response = await fetch(`${BASE_URL}/matches/upcoming`)
+    if (!response.ok) throw new Error('Failed to load upcoming matches')
+    return await response.json()
+}

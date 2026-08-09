@@ -1,7 +1,16 @@
 {
-  "random_split_accuracy": 71.7,
-  "time_ordered_split_accuracy": 66.5,
-  "deployed_model_holdout_accuracy": 70.7,
-  "feature_count": 21,
-  "note": "Time-ordered split is a better proxy for real forecasting than random split."
+  "random_split_accuracy": 59.1,
+  "time_ordered_split_accuracy": 60.8,
+  "vct_regional_split_accuracy": 58.3,
+  "international_split_accuracy": 67.6,
+  "brier_score": 0.2364,
+  "log_loss": 0.6653,
+  "deployed_model_holdout_accuracy": 60.8,
+  "walk_forward_accuracy": 58.3,
+  "selective_65_accuracy": 66.7,
+  "selective_65_coverage": 29.1,
+  "selective_65_n": 69,
+  "betting_confidence_gate": 65.0,
+  "feature_count": 4,
+  "note": "Segment splits use time-ordered holdout. selective_65_* = accuracy/coverage when only picking favorites at confidence \u2265 65%. Lower Brier score = better calibrated probabilities."
 }

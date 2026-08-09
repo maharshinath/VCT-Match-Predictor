@@ -11,12 +11,141 @@ const TABS = [
   { id: 'maps', label: 'Map Predictions' },
   { id: 'stats', label: 'Stats' },
   { id: 'winner', label: 'Breakdown' },
+  { id: 'betting', label: 'Betting' },
   { id: 'roster', label: 'Roaster' },
 ]
 
 function logoUrl(path) {
   if (!path) return DEFAULT_LOGO
   return path.startsWith('/') ? `${API_ORIGIN}${path}` : `${API_ORIGIN}/${path}`
+}
+
+function plainRecTitle(rec, tipTeam) {
+  if (rec === 'bet' && tipTeam) return `Worth a look on ${tipTeam}`
+  if (rec === 'lean' && tipTeam) return `Slight lean: ${tipTeam}`
+  return 'Skip this one'
+}
+
+function plainRecReason(betting, hasOdds) {
+  const tip = betting.tip_team || betting.favored_team
+  if (!hasOdds) {
+    return 'We need book prices to check if our win chance is better than the site’s.'
+  }
+  if (betting.recommendation === 'bet' && tip) {
+    const ours = betting.tip_model_pct
+    const books = betting.tip_book_pct
+    if (ours != null && books != null) {
+      return `We give ${tip} about ${ours}% — books price them closer to ${books}%. That gap is the value.`
+    }
+    return `Our win chance for ${tip} is higher than what the book prices imply.`
+  }
+  if (tip && betting.tip_model_pct != null && betting.tip_book_pct != null) {
+    return `No clear value — for ${tip} we have ~${betting.tip_model_pct}% vs books ~${betting.tip_book_pct}%.`
+  }
+  return 'Book prices already look in line with (or better than) our estimates.'
+}
+
+function BettingInsightsPanel({ team1, team2, betting }) {
+  if (!betting) {
+    return (
+      <p className="tab-panel-message">
+        Betting info isn't available for this matchup.
+      </p>
+    )
+  }
+
+  const rec = betting.recommendation || 'pass'
+  const hasOdds = Boolean(betting.odds_available)
+  const bookies = Array.isArray(betting.bookies) ? betting.bookies : []
+  const tipTeam = betting.tip_team || betting.favored_team
+  const team1Pct = ((betting.model_prob_team1 ?? 0) * 100).toFixed(0)
+  const team2Pct = ((betting.model_prob_team2 ?? 0) * 100).toFixed(0)
+  const book1Pct =
+    betting.implied_prob_team1 != null
+      ? Number(betting.implied_prob_team1).toFixed(0)
+      : null
+  const book2Pct =
+    betting.implied_prob_team2 != null
+      ? Number(betting.implied_prob_team2).toFixed(0)
+      : null
+
+  return (
+    <div className="betting-insights">
+      <div className={`betting-rec betting-rec--${rec}`}>
+        <strong className="betting-rec-label">
+          {plainRecTitle(rec, tipTeam)}
+        </strong>
+        <p className="betting-rec-reason">{plainRecReason(betting, hasOdds)}</p>
+      </div>
+
+      <div className="betting-simple-row">
+        <div className="betting-simple-block">
+          <span className="betting-simple-label">Our win chance</span>
+          <p>
+            {team1.Team} <strong>{team1Pct}%</strong>
+          </p>
+          <p>
+            {team2.Team} <strong>{team2Pct}%</strong>
+          </p>
+        </div>
+
+        <div className="betting-simple-block">
+          <span className="betting-simple-label">
+            {hasOdds ? 'Book win chance' : 'Book prices'}
+          </span>
+          {hasOdds && book1Pct != null && book2Pct != null ? (
+            <>
+              <p>
+                {team1.Team} <strong>{book1Pct}%</strong>
+                <span className="betting-sub"> (price {Number(betting.team1_odds).toFixed(2)})</span>
+              </p>
+              <p>
+                {team2.Team} <strong>{book2Pct}%</strong>
+                <span className="betting-sub"> (price {Number(betting.team2_odds).toFixed(2)})</span>
+              </p>
+              <p className="betting-sub">
+                Compare our % to the book %. Higher on our side = possible value
+                {betting.bookie_count > 1 ? ` · avg of ${betting.bookie_count} sites` : ''}
+              </p>
+            </>
+          ) : (
+            <p className="betting-sub">No prices found on VLR for this match right now.</p>
+          )}
+        </div>
+      </div>
+
+      {bookies.length > 0 && (
+        <div className="betting-books">
+          <h4>Prices by site</h4>
+          <ul className="betting-books-list">
+            {bookies.map((b) => (
+              <li key={`${b.bookie}-${b.team1_odds}-${b.team2_odds}`}>
+                <span className="betting-book-name">{b.bookie}</span>
+                <span>
+                  {team1.Team} {Number(b.team1_odds).toFixed(2)} · {team2.Team}{' '}
+                  {Number(b.team2_odds).toFixed(2)}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {betting.source_url && (
+            <a
+              className="betting-source"
+              href={betting.source_url}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Check on VLR.gg
+            </a>
+          )}
+        </div>
+      )}
+
+      <p className="prediction-disclaimer">
+        For fun / learning only — not financial advice. Betting involves risk.
+      </p>
+    </div>
+  )
 }
 
 function Prediction({
@@ -227,6 +356,14 @@ function Prediction({
                 team2={team2}
                 mapPredictions={result.map_predictions}
                 embedded
+              />
+            )}
+
+            {activeTab === 'betting' && (
+              <BettingInsightsPanel
+                team1={team1}
+                team2={team2}
+                betting={result.betting}
               />
             )}
 
