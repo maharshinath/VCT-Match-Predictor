@@ -4,9 +4,18 @@
 
 [![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)](https://react.dev/)
 [![Flask](https://img.shields.io/badge/Flask-3-000000?logo=flask&logoColor=white)](https://flask.palletsprojects.com/)
-[![scikit-learn](https://img.shields.io/badge/Elo%20%2B%20form-model-F7931E?logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
+[![Model](https://img.shields.io/badge/Model-Elo%20%2B%20form-F7931E?logo=scikit-learn&logoColor=white)](https://scikit-learn.org/)
+[![Accuracy](https://img.shields.io/badge/Holdout~60.8%25-time--ordered-2ea44f)](./README.md#model-accuracy)
+[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-Forked from [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor) and extended with a Kaggle data pipeline, VLR live sync, 2021–2026 seasons, point-in-time features, Elo-anchored match modeling, map-level models, and a full UI redesign.
+Based on [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor), extended with a Kaggle data pipeline, VLR live sync, 2021–2026 seasons, point-in-time features, Elo-anchored match modeling, map-level models, and a full UI redesign.
+
+| Snapshot | |
+|---|---|
+| **Matches** | 1,189 pro series |
+| **Teams** | 82 |
+| **Model** | Elo + recent form |
+| **Honest holdout** | ~60.8% (time-ordered) |
 
 ---
 
@@ -255,7 +264,7 @@ Default: **`--min-year 2021`** with pro-tournament filtering (Champions, Masters
 
 ## License & credits
 
+- **License:** [MIT](./LICENSE)
 - **Dataset:** MIT (Kaggle)
-- **Application code:** see repository license
 - **Author:** [maharshinath](https://github.com/maharshinath)
-- **Original fork:** [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor)
+- **Original project:** [terrdv/VCT-Match-Predictor](https://github.com/terrdv/VCT-Match-Predictor)
